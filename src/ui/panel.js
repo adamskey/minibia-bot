@@ -979,8 +979,19 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
                   <span>Magic Level Trainer</span>
                 </label>
                 <input type="text" id="minibia-bot-rune-spell" placeholder="Spell words" />
-                <input type="number" id="minibia-bot-rune-mana" min="0" placeholder="Mana" />
+                <div></div>
               </div>
+              <div class="mb-field-grid">
+                <label class="mb-field" for="minibia-bot-rune-mana-min">
+                  <span class="mb-field-label">Min Mana</span>
+                  <input type="number" id="minibia-bot-rune-mana-min" min="0" placeholder="150" />
+                </label>
+                <label class="mb-field" for="minibia-bot-rune-mana-max">
+                  <span class="mb-field-label">Max Mana</span>
+                  <input type="number" id="minibia-bot-rune-mana-max" min="0" placeholder="200" />
+                </label>
+              </div>
+              <div class="mb-small-note">Casts when mana reaches a random value between min and max (inclusive). A new random threshold is rolled after each cast.</div>
               <div class="mb-row mb-row-compact">
                 <label class="mb-toggle">
                   <input type="checkbox" id="minibia-bot-auto-eat-enabled" />
@@ -1162,7 +1173,8 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
     setPanelCollapsed(panel, getSavedPanelCollapsed());
 
     const spellInput = panel.querySelector("#minibia-bot-rune-spell");
-    const manaInput = panel.querySelector("#minibia-bot-rune-mana");
+    const manaMinInput = panel.querySelector("#minibia-bot-rune-mana-min");
+    const manaMaxInput = panel.querySelector("#minibia-bot-rune-mana-max");
     const runeEnabledInput = panel.querySelector("#minibia-bot-rune-enabled");
     const autoEatEnabledInput = panel.querySelector("#minibia-bot-auto-eat-enabled");
     const autoEatHotkeyInput = panel.querySelector("#minibia-bot-auto-eat-hotkey");
@@ -1296,27 +1308,59 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
       });
     }
 
-    if (manaInput) {
-      manaInput.value = String(bot.rune?.config?.runeManaCost ?? 0);
-      manaInput.addEventListener("change", () => {
-        const runeManaCost = Math.max(0, Number(manaInput.value) || 0);
-        manaInput.value = String(runeManaCost);
-        bot.rune.updateConfig({ runeManaCost });
-      });
+    function readRuneManaRange() {
+      const min = Math.max(0, Number(manaMinInput?.value) || 0);
+      const max = Math.max(0, Number(manaMaxInput?.value) || 0);
+      return {
+        runeManaMin: Math.min(min, max),
+        runeManaMax: Math.max(min, max),
+      };
+    }
+
+    function syncRuneManaInputs(range = bot.rune?.config) {
+      if (!range) {
+        return;
+      }
+
+      const min = Math.max(0, Number(range.runeManaMin ?? range.runeManaCost) || 0);
+      const max = Math.max(0, Number(range.runeManaMax ?? range.runeManaCost) || 0);
+      if (manaMinInput) {
+        manaMinInput.value = String(Math.min(min, max));
+      }
+      if (manaMaxInput) {
+        manaMaxInput.value = String(Math.max(min, max));
+      }
+    }
+
+    function updateRuneManaConfig() {
+      const range = readRuneManaRange();
+      bot.rune.updateConfig(range);
+      syncRuneManaInputs(bot.rune.config);
+    }
+
+    syncRuneManaInputs();
+
+    if (manaMinInput) {
+      manaMinInput.addEventListener("change", updateRuneManaConfig);
+    }
+
+    if (manaMaxInput) {
+      manaMaxInput.addEventListener("change", updateRuneManaConfig);
     }
 
     if (runeEnabledInput) {
       runeEnabledInput.checked = !!bot.rune?.status?.().running;
       runeEnabledInput.addEventListener("change", () => {
         const runeSpellWords = spellInput?.value?.trim() || bot.rune.config.runeSpellWords;
-        const runeManaCost = Math.max(0, Number(manaInput?.value) || bot.rune.config.runeManaCost || 0);
+        const manaRange = readRuneManaRange();
 
         if (runeEnabledInput.checked) {
-          bot.rune.start({ runeSpellWords, runeManaCost });
+          bot.rune.start({ runeSpellWords, ...manaRange });
         } else {
           bot.rune.stop();
         }
 
+        syncRuneManaInputs(bot.rune.config);
         refreshRuneStatus();
       });
     }

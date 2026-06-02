@@ -1722,6 +1722,7 @@ window.__minibiaBotBundle.installRuneModule = function installRuneModule(bot) {
     running: false,
     timerId: null,
     lastRuneAt: 0,
+    nextRuneManaThreshold: null,
   };
   let resumeListenersAttached = false;
 
@@ -1731,13 +1732,61 @@ window.__minibiaBotBundle.installRuneModule = function installRuneModule(bot) {
       minHpPercent: 50,
       minFoodSeconds: 30,
       runeSpellWords: "adori vita vis",
-      runeManaCost: 600,
+      runeManaMin: 600,
+      runeManaMax: 600,
       runeCooldownMs: 3500,
       enabled: false,
     },
     bot.storage.get(configStorageKey, {})
   );
   config.tickMs = 250;
+
+  const legacyManaCost = Math.max(0, Math.trunc(Number(config.runeManaCost) || 0));
+  if (legacyManaCost > 0 && config.runeManaMin == null && config.runeManaMax == null) {
+    config.runeManaMin = legacyManaCost;
+    config.runeManaMax = legacyManaCost;
+  }
+
+  function normalizeManaRange(minValue, maxValue) {
+    let min = Math.max(0, Math.trunc(Number(minValue) || 0));
+    let max = Math.max(0, Math.trunc(Number(maxValue) || 0));
+
+    if (max < min) {
+      const swap = min;
+      min = max;
+      max = swap;
+    }
+
+    return { min, max };
+  }
+
+  function applyManaRange(minValue, maxValue) {
+    const range = normalizeManaRange(minValue, maxValue);
+    config.runeManaMin = range.min;
+    config.runeManaMax = range.max;
+    return range;
+  }
+
+  applyManaRange(config.runeManaMin, config.runeManaMax);
+
+  function rollNextManaThreshold() {
+    const { min, max } = normalizeManaRange(config.runeManaMin, config.runeManaMax);
+    if (min === max) {
+      state.nextRuneManaThreshold = min;
+      return min;
+    }
+
+    state.nextRuneManaThreshold = Math.floor(Math.random() * (max - min + 1)) + min;
+    return state.nextRuneManaThreshold;
+  }
+
+  function getCurrentManaThreshold() {
+    if (!Number.isFinite(state.nextRuneManaThreshold)) {
+      return rollNextManaThreshold();
+    }
+
+    return state.nextRuneManaThreshold;
+  }
 
   function persistConfig() {
     bot.storage.set(configStorageKey, { ...config });
@@ -1788,7 +1837,8 @@ window.__minibiaBotBundle.installRuneModule = function installRuneModule(bot) {
 
     const hpPercent = hp.max > 0 ? (hp.current / hp.max) * 100 : 0;
     const enoughHp = hpPercent >= config.minHpPercent;
-    const enoughMana = mana.current >= config.runeManaCost;
+    const manaThreshold = getCurrentManaThreshold();
+    const enoughMana = mana.current >= manaThreshold;
     const enoughFood = food?.seconds == null || food.seconds >= config.minFoodSeconds;
     const cooldownElapsedMs = now - state.lastRuneAt;
     const cooldownRemainingMs = Math.max(0, config.runeCooldownMs - cooldownElapsedMs);
@@ -1801,6 +1851,7 @@ window.__minibiaBotBundle.installRuneModule = function installRuneModule(bot) {
       enoughFood,
       cooldownReady,
       cooldownRemainingMs,
+      manaThreshold,
       canMakeRune: enoughHp && enoughMana && enoughFood && cooldownReady,
     };
   }
@@ -1814,9 +1865,16 @@ window.__minibiaBotBundle.installRuneModule = function installRuneModule(bot) {
       return false;
     }
 
+    const manaThreshold = getCurrentManaThreshold();
     const sent = bot.sendChat(config.runeSpellWords);
     if (sent) {
       state.lastRuneAt = Date.now();
+      const nextThreshold = rollNextManaThreshold();
+      bot.log("rune spell cast", {
+        spell: config.runeSpellWords,
+        manaThreshold,
+        nextManaThreshold: nextThreshold,
+      });
     }
 
     return sent;
@@ -1894,8 +1952,12 @@ window.__minibiaBotBundle.installRuneModule = function installRuneModule(bot) {
     }
 
     state.running = true;
+    rollNextManaThreshold();
     attachResumeListeners();
-    bot.log("rune maker started", { ...config });
+    bot.log("rune maker started", {
+      ...config,
+      nextManaThreshold: state.nextRuneManaThreshold,
+    });
     tick();
     return true;
   }
@@ -1930,10 +1992,28 @@ window.__minibiaBotBundle.installRuneModule = function installRuneModule(bot) {
   }
 
   function updateConfig(nextConfig = {}) {
+    if (
+      Object.prototype.hasOwnProperty.call(nextConfig, "runeManaMin") ||
+      Object.prototype.hasOwnProperty.call(nextConfig, "runeManaMax") ||
+      Object.prototype.hasOwnProperty.call(nextConfig, "runeManaCost")
+    ) {
+      const range = applyManaRange(
+        nextConfig.runeManaMin ?? nextConfig.runeManaCost ?? config.runeManaMin,
+        nextConfig.runeManaMax ?? nextConfig.runeManaCost ?? config.runeManaMax
+      );
+      nextConfig.runeManaMin = range.min;
+      nextConfig.runeManaMax = range.max;
+      delete nextConfig.runeManaCost;
+    }
+
     Object.assign(config, nextConfig);
     config.tickMs = 250;
+    rollNextManaThreshold();
     persistConfig();
-    bot.log("rune config updated", { ...config });
+    bot.log("rune config updated", {
+      ...config,
+      nextManaThreshold: state.nextRuneManaThreshold,
+    });
     return { ...config };
   }
 
@@ -7587,8 +7667,19 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
                   <span>Magic Level Trainer</span>
                 </label>
                 <input type="text" id="minibia-bot-rune-spell" placeholder="Spell words" />
-                <input type="number" id="minibia-bot-rune-mana" min="0" placeholder="Mana" />
+                <div></div>
               </div>
+              <div class="mb-field-grid">
+                <label class="mb-field" for="minibia-bot-rune-mana-min">
+                  <span class="mb-field-label">Min Mana</span>
+                  <input type="number" id="minibia-bot-rune-mana-min" min="0" placeholder="150" />
+                </label>
+                <label class="mb-field" for="minibia-bot-rune-mana-max">
+                  <span class="mb-field-label">Max Mana</span>
+                  <input type="number" id="minibia-bot-rune-mana-max" min="0" placeholder="200" />
+                </label>
+              </div>
+              <div class="mb-small-note">Casts when mana reaches a random value between min and max (inclusive). A new random threshold is rolled after each cast.</div>
               <div class="mb-row mb-row-compact">
                 <label class="mb-toggle">
                   <input type="checkbox" id="minibia-bot-auto-eat-enabled" />
@@ -7770,7 +7861,8 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
     setPanelCollapsed(panel, getSavedPanelCollapsed());
 
     const spellInput = panel.querySelector("#minibia-bot-rune-spell");
-    const manaInput = panel.querySelector("#minibia-bot-rune-mana");
+    const manaMinInput = panel.querySelector("#minibia-bot-rune-mana-min");
+    const manaMaxInput = panel.querySelector("#minibia-bot-rune-mana-max");
     const runeEnabledInput = panel.querySelector("#minibia-bot-rune-enabled");
     const autoEatEnabledInput = panel.querySelector("#minibia-bot-auto-eat-enabled");
     const autoEatHotkeyInput = panel.querySelector("#minibia-bot-auto-eat-hotkey");
@@ -7904,27 +7996,59 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
       });
     }
 
-    if (manaInput) {
-      manaInput.value = String(bot.rune?.config?.runeManaCost ?? 0);
-      manaInput.addEventListener("change", () => {
-        const runeManaCost = Math.max(0, Number(manaInput.value) || 0);
-        manaInput.value = String(runeManaCost);
-        bot.rune.updateConfig({ runeManaCost });
-      });
+    function readRuneManaRange() {
+      const min = Math.max(0, Number(manaMinInput?.value) || 0);
+      const max = Math.max(0, Number(manaMaxInput?.value) || 0);
+      return {
+        runeManaMin: Math.min(min, max),
+        runeManaMax: Math.max(min, max),
+      };
+    }
+
+    function syncRuneManaInputs(range = bot.rune?.config) {
+      if (!range) {
+        return;
+      }
+
+      const min = Math.max(0, Number(range.runeManaMin ?? range.runeManaCost) || 0);
+      const max = Math.max(0, Number(range.runeManaMax ?? range.runeManaCost) || 0);
+      if (manaMinInput) {
+        manaMinInput.value = String(Math.min(min, max));
+      }
+      if (manaMaxInput) {
+        manaMaxInput.value = String(Math.max(min, max));
+      }
+    }
+
+    function updateRuneManaConfig() {
+      const range = readRuneManaRange();
+      bot.rune.updateConfig(range);
+      syncRuneManaInputs(bot.rune.config);
+    }
+
+    syncRuneManaInputs();
+
+    if (manaMinInput) {
+      manaMinInput.addEventListener("change", updateRuneManaConfig);
+    }
+
+    if (manaMaxInput) {
+      manaMaxInput.addEventListener("change", updateRuneManaConfig);
     }
 
     if (runeEnabledInput) {
       runeEnabledInput.checked = !!bot.rune?.status?.().running;
       runeEnabledInput.addEventListener("change", () => {
         const runeSpellWords = spellInput?.value?.trim() || bot.rune.config.runeSpellWords;
-        const runeManaCost = Math.max(0, Number(manaInput?.value) || bot.rune.config.runeManaCost || 0);
+        const manaRange = readRuneManaRange();
 
         if (runeEnabledInput.checked) {
-          bot.rune.start({ runeSpellWords, runeManaCost });
+          bot.rune.start({ runeSpellWords, ...manaRange });
         } else {
           bot.rune.stop();
         }
 
+        syncRuneManaInputs(bot.rune.config);
         refreshRuneStatus();
       });
     }
