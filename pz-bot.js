@@ -3202,17 +3202,7 @@ window.__minibiaBotBundle.installAutoAttackModule = function installAutoAttackMo
       return false;
     }
 
-    const distance = getTileDistance(playerPosition, targetPosition);
-    const maxTargetDistance = Math.max(1, Number(config.maxTargetDistance) || 8);
-    if (distance > maxTargetDistance) {
-      return false;
-    }
-
-    if (config.meleeMode) {
-      return distance <= 1;
-    }
-
-    return true;
+    return getTileDistance(playerPosition, targetPosition) <= 1;
   }
 
   function getMonsterCandidates(now = Date.now()) {
@@ -3310,13 +3300,17 @@ window.__minibiaBotBundle.installAutoAttackModule = function installAutoAttackMo
   }
 
   function shouldGiveUpTarget(target) {
-    const maxTargetDistance = Math.max(1, Number(config.maxTargetDistance) || 8);
     const playerPosition = normalizePosition(bot.getPlayerPosition());
     const targetPosition = normalizePosition(target?.getPosition?.() || target?.__position);
     if (!playerPosition || !targetPosition) {
       return false;
     }
 
+    if (config.skillTrainOnMonster) {
+      return !isReachableSkillTrainTarget(target, playerPosition);
+    }
+
+    const maxTargetDistance = Math.max(1, Number(config.maxTargetDistance) || 8);
     return getTileDistance(playerPosition, targetPosition) > maxTargetDistance;
   }
 
@@ -7969,7 +7963,7 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
                 <button type="button" class="mb-small-button" id="minibia-bot-auto-attack-target-add">Add</button>
               </div>
               <div class="mb-list" id="minibia-bot-auto-attack-target-list"></div>
-              <div class="mb-small-note">Melee mode uses the target hotkey, then walks adjacent to the target. Non-melee mode uses the target hotkey to acquire a target and the rune hotkey to cast on that target. Leave target names empty to attack any monster; add names to attack only those creatures (skips NPCs and other mobs). Skill Train picks the reachable target with the highest HP and switches when another valid target has more HP (checked about every 1.5s).</div>
+              <div class="mb-small-note">Melee mode uses the target hotkey, then walks adjacent to the target. Non-melee mode uses the target hotkey to acquire a target and the rune hotkey to cast on that target. Leave target names empty to attack any monster; add names to attack only those creatures (skips NPCs and other mobs). Skill Train only considers monsters on tiles next to you (within 1 square), picks the highest HP among them, and switches when another nearby target has more HP (checked about every 1.5s).</div>
             </div>
           </div>
         </div>
