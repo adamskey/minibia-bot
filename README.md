@@ -12,7 +12,7 @@
 6. Paste this and press `Enter`:
 
 ```js
-fetch("https://raw.githubusercontent.com/spardue/minibia-bot/refs/heads/main/pz-bot.js")
+fetch("https://raw.githubusercontent.com/adamskey/minibia-bot/refs/heads/main/pz-bot.js")
   .then((r) => r.text())
   .then((code) => eval(code));
 ```
