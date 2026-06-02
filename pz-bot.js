@@ -2832,6 +2832,7 @@ window.__minibiaBotBundle.installAutoAttackModule = function installAutoAttackMo
     lastFollowDistance: Number.POSITIVE_INFINITY,
     lastFollowProgressAt: 0,
     lastFollowStallAt: 0,
+    lastSkillTrainSwitchAt: 0,
     skippedTargetIds: new Map(),
   };
 
@@ -2846,6 +2847,8 @@ window.__minibiaBotBundle.installAutoAttackModule = function installAutoAttackMo
       maxTargetDistance: 8,
       meleeMode: true,
       targetNames: [],
+      skillTrainOnMonster: false,
+      skillTrainRetargetMs: 1500,
       enabled: false,
     },
     storedConfig
@@ -3182,17 +3185,128 @@ window.__minibiaBotBundle.installAutoAttackModule = function installAutoAttackMo
     return !!target?.id && (state.skippedTargetIds.get(target.id) || 0) > now;
   }
 
+  function readCreatureHealth(creature) {
+    const value = [
+      creature?.state?.health,
+      creature?.health,
+      creature?.hp,
+      creature?.currentHealth,
+    ].find((entry) => Number.isFinite(Number(entry)));
+
+    return value == null ? -1 : Math.trunc(Number(value));
+  }
+
+  function isReachableSkillTrainTarget(monster, playerPosition) {
+    const targetPosition = normalizePosition(monster?.getPosition?.() || monster?.__position);
+    if (!playerPosition || !targetPosition || playerPosition.z !== targetPosition.z) {
+      return false;
+    }
+
+    const distance = getTileDistance(playerPosition, targetPosition);
+    const maxTargetDistance = Math.max(1, Number(config.maxTargetDistance) || 8);
+    if (distance > maxTargetDistance) {
+      return false;
+    }
+
+    if (config.meleeMode) {
+      return distance <= 1;
+    }
+
+    return true;
+  }
+
   function getMonsterCandidates(now = Date.now()) {
     pruneSkippedTargets(now);
 
     const playerPosition = normalizePosition(bot.getPlayerPosition());
     return getNearbyMonsters()
       .filter((monster) => !isTargetSkipped(monster, now))
+      .filter((monster) => !config.skillTrainOnMonster || isReachableSkillTrainTarget(monster, playerPosition))
       .sort((left, right) => {
         const leftDistance = getTileDistance(playerPosition, normalizePosition(left?.getPosition?.() || left?.__position));
         const rightDistance = getTileDistance(playerPosition, normalizePosition(right?.getPosition?.() || right?.__position));
         return leftDistance - rightDistance || Number(left?.id || 0) - Number(right?.id || 0);
       });
+  }
+
+  function pickSkillTrainTarget(candidates, playerPosition) {
+    if (!candidates.length) {
+      return null;
+    }
+
+    return candidates
+      .slice()
+      .sort((left, right) => {
+        const healthDiff = readCreatureHealth(right) - readCreatureHealth(left);
+        if (healthDiff !== 0) {
+          return healthDiff;
+        }
+
+        const leftDistance = getTileDistance(
+          playerPosition,
+          normalizePosition(left?.getPosition?.() || left?.__position)
+        );
+        const rightDistance = getTileDistance(
+          playerPosition,
+          normalizePosition(right?.getPosition?.() || right?.__position)
+        );
+        return leftDistance - rightDistance || Number(left?.id || 0) - Number(right?.id || 0);
+      })[0];
+  }
+
+  function shouldSwitchSkillTrainTarget(current, best) {
+    if (!best) {
+      return false;
+    }
+
+    if (!current) {
+      return true;
+    }
+
+    if (isSameCreature(current, best)) {
+      return false;
+    }
+
+    const currentHealth = readCreatureHealth(current);
+    const bestHealth = readCreatureHealth(best);
+    return bestHealth > currentHealth;
+  }
+
+  function syncSkillTrainTarget(now = Date.now()) {
+    if (!config.skillTrainOnMonster) {
+      return false;
+    }
+
+    const playerPosition = normalizePosition(bot.getPlayerPosition());
+    const candidates = getMonsterCandidates(now);
+    const bestTarget = pickSkillTrainTarget(candidates, playerPosition);
+    if (!bestTarget) {
+      return false;
+    }
+
+    const currentTarget = getCurrentTarget() || getEngagedTarget();
+    if (!shouldSwitchSkillTrainTarget(currentTarget, bestTarget)) {
+      return false;
+    }
+
+    const retargetCooldownMs = Math.max(250, Number(config.skillTrainRetargetMs) || 1500);
+    if (currentTarget && now - state.lastSkillTrainSwitchAt < retargetCooldownMs) {
+      return false;
+    }
+
+    if (setCurrentTarget(bestTarget)) {
+      state.lastSkillTrainSwitchAt = now;
+      markCombatActive(now);
+      bot.log("skill train switched target", {
+        id: bestTarget.id,
+        name: bestTarget.name || "Mob",
+        health: readCreatureHealth(bestTarget),
+        previousHealth: currentTarget ? readCreatureHealth(currentTarget) : null,
+      });
+      return true;
+    }
+
+    return false;
   }
 
   function shouldGiveUpTarget(target) {
@@ -3396,10 +3510,14 @@ window.__minibiaBotBundle.installAutoAttackModule = function installAutoAttackMo
       return false;
     }
 
+    const playerPosition = normalizePosition(bot.getPlayerPosition());
+    const candidates = getMonsterCandidates(now);
     const engagedTarget = getEngagedTarget();
-    const preferredTarget = engagedTarget && !isTargetSkipped(engagedTarget, now)
-      ? engagedTarget
-      : (getMonsterCandidates(now)[0] || null);
+    const preferredTarget = config.skillTrainOnMonster
+      ? pickSkillTrainTarget(candidates, playerPosition)
+      : engagedTarget && !isTargetSkipped(engagedTarget, now)
+        ? engagedTarget
+        : (candidates[0] || null);
     if (preferredTarget && setCurrentTarget(preferredTarget)) {
       state.lastTargetHotkeyAt = now;
       markCombatActive(now);
@@ -3473,6 +3591,10 @@ window.__minibiaBotBundle.installAutoAttackModule = function installAutoAttackMo
     }
 
     syncCombatState(now);
+
+    if (config.skillTrainOnMonster) {
+      syncSkillTrainTarget(now);
+    }
 
     if (config.meleeMode) {
       const chased = syncMeleeChase(now);
@@ -3595,6 +3717,13 @@ window.__minibiaBotBundle.installAutoAttackModule = function installAutoAttackMo
 
     if (Object.prototype.hasOwnProperty.call(nextConfig, "targetNames")) {
       nextConfig.targetNames = normalizeTargetNames(nextConfig.targetNames);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(nextConfig, "skillTrainRetargetMs")) {
+      nextConfig.skillTrainRetargetMs = Math.max(
+        250,
+        Math.trunc(Number(nextConfig.skillTrainRetargetMs) || config.skillTrainRetargetMs || 1500)
+      );
     }
 
     Object.assign(config, nextConfig);
@@ -7823,6 +7952,10 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
                 <input type="checkbox" id="minibia-bot-auto-attack-melee" />
                 <span>Melee Mode</span>
               </label>
+              <label class="mb-toggle">
+                <input type="checkbox" id="minibia-bot-auto-attack-skill-train" />
+                <span>Skill Train on Monster</span>
+              </label>
               <label class="mb-field" for="minibia-bot-auto-attack-hotkey">
                 <span class="mb-field-label">Target Hotkey (1-12)</span>
                 <input type="number" id="minibia-bot-auto-attack-hotkey" min="1" max="12" placeholder="3" />
@@ -7836,7 +7969,7 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
                 <button type="button" class="mb-small-button" id="minibia-bot-auto-attack-target-add">Add</button>
               </div>
               <div class="mb-list" id="minibia-bot-auto-attack-target-list"></div>
-              <div class="mb-small-note">Melee mode uses the target hotkey, then walks adjacent to the target. Non-melee mode uses the target hotkey to acquire a target and the rune hotkey to cast on that target. Leave target names empty to attack any monster; add names to attack only those creatures (skips NPCs and other mobs).</div>
+              <div class="mb-small-note">Melee mode uses the target hotkey, then walks adjacent to the target. Non-melee mode uses the target hotkey to acquire a target and the rune hotkey to cast on that target. Leave target names empty to attack any monster; add names to attack only those creatures (skips NPCs and other mobs). Skill Train picks the reachable target with the highest HP and switches when another valid target has more HP (checked about every 1.5s).</div>
             </div>
           </div>
         </div>
@@ -7876,6 +8009,7 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
     const autoHealManaHotkeyInput = panel.querySelector("#minibia-bot-auto-heal-mana-hotkey");
     const autoAttackEnabledInput = panel.querySelector("#minibia-bot-auto-attack-enabled");
     const autoAttackMeleeInput = panel.querySelector("#minibia-bot-auto-attack-melee");
+    const autoAttackSkillTrainInput = panel.querySelector("#minibia-bot-auto-attack-skill-train");
     const autoAttackHotkeyInput = panel.querySelector("#minibia-bot-auto-attack-hotkey");
     const autoAttackRuneHotkeyInput = panel.querySelector("#minibia-bot-auto-attack-rune-hotkey");
     const autoAttackTargetInput = panel.querySelector("#minibia-bot-auto-attack-target-input");
@@ -8381,6 +8515,13 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
       });
     }
 
+    if (autoAttackSkillTrainInput) {
+      autoAttackSkillTrainInput.checked = !!bot.attack?.config?.skillTrainOnMonster;
+      autoAttackSkillTrainInput.addEventListener("change", () => {
+        bot.attack.updateConfig({ skillTrainOnMonster: autoAttackSkillTrainInput.checked });
+      });
+    }
+
     function addAttackTargetName() {
       const rawName = autoAttackTargetInput?.value?.trim() || "";
       if (!rawName) {
@@ -8432,9 +8573,10 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
           return bot.attack.config.runeHotbarSlot ?? null;
         })();
         const meleeMode = !!autoAttackMeleeInput?.checked;
+        const skillTrainOnMonster = !!autoAttackSkillTrainInput?.checked;
 
         if (autoAttackEnabledInput.checked) {
-          bot.attack.start({ targetHotbarSlot, runeHotbarSlot, meleeMode });
+          bot.attack.start({ targetHotbarSlot, runeHotbarSlot, meleeMode, skillTrainOnMonster });
         } else {
           bot.attack.stop();
         }

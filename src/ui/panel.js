@@ -1135,6 +1135,10 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
                 <input type="checkbox" id="minibia-bot-auto-attack-melee" />
                 <span>Melee Mode</span>
               </label>
+              <label class="mb-toggle">
+                <input type="checkbox" id="minibia-bot-auto-attack-skill-train" />
+                <span>Skill Train on Monster</span>
+              </label>
               <label class="mb-field" for="minibia-bot-auto-attack-hotkey">
                 <span class="mb-field-label">Target Hotkey (1-12)</span>
                 <input type="number" id="minibia-bot-auto-attack-hotkey" min="1" max="12" placeholder="3" />
@@ -1148,7 +1152,7 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
                 <button type="button" class="mb-small-button" id="minibia-bot-auto-attack-target-add">Add</button>
               </div>
               <div class="mb-list" id="minibia-bot-auto-attack-target-list"></div>
-              <div class="mb-small-note">Melee mode uses the target hotkey, then walks adjacent to the target. Non-melee mode uses the target hotkey to acquire a target and the rune hotkey to cast on that target. Leave target names empty to attack any monster; add names to attack only those creatures (skips NPCs and other mobs).</div>
+              <div class="mb-small-note">Melee mode uses the target hotkey, then walks adjacent to the target. Non-melee mode uses the target hotkey to acquire a target and the rune hotkey to cast on that target. Leave target names empty to attack any monster; add names to attack only those creatures (skips NPCs and other mobs). Skill Train picks the reachable target with the highest HP and switches when another valid target has more HP (checked about every 1.5s).</div>
             </div>
           </div>
         </div>
@@ -1188,6 +1192,7 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
     const autoHealManaHotkeyInput = panel.querySelector("#minibia-bot-auto-heal-mana-hotkey");
     const autoAttackEnabledInput = panel.querySelector("#minibia-bot-auto-attack-enabled");
     const autoAttackMeleeInput = panel.querySelector("#minibia-bot-auto-attack-melee");
+    const autoAttackSkillTrainInput = panel.querySelector("#minibia-bot-auto-attack-skill-train");
     const autoAttackHotkeyInput = panel.querySelector("#minibia-bot-auto-attack-hotkey");
     const autoAttackRuneHotkeyInput = panel.querySelector("#minibia-bot-auto-attack-rune-hotkey");
     const autoAttackTargetInput = panel.querySelector("#minibia-bot-auto-attack-target-input");
@@ -1693,6 +1698,13 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
       });
     }
 
+    if (autoAttackSkillTrainInput) {
+      autoAttackSkillTrainInput.checked = !!bot.attack?.config?.skillTrainOnMonster;
+      autoAttackSkillTrainInput.addEventListener("change", () => {
+        bot.attack.updateConfig({ skillTrainOnMonster: autoAttackSkillTrainInput.checked });
+      });
+    }
+
     function addAttackTargetName() {
       const rawName = autoAttackTargetInput?.value?.trim() || "";
       if (!rawName) {
@@ -1744,9 +1756,10 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
           return bot.attack.config.runeHotbarSlot ?? null;
         })();
         const meleeMode = !!autoAttackMeleeInput?.checked;
+        const skillTrainOnMonster = !!autoAttackSkillTrainInput?.checked;
 
         if (autoAttackEnabledInput.checked) {
-          bot.attack.start({ targetHotbarSlot, runeHotbarSlot, meleeMode });
+          bot.attack.start({ targetHotbarSlot, runeHotbarSlot, meleeMode, skillTrainOnMonster });
         } else {
           bot.attack.stop();
         }
