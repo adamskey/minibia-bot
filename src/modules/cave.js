@@ -30,6 +30,7 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
     lastObservedPosition: null,
     pendingTransitionSource: null,
     pausedForCombat: false,
+    pausedForCreatures: false,
     delayUntil: 0,
     delayWaypointIndex: null,
   };
@@ -42,6 +43,7 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
       tickMs: 500,
       repathMs: 1500,
       waypointTolerance: 0,
+      pauseUntilClear: true,
       enabled: false,
       activePresetName: defaultPresetName,
     },
@@ -481,6 +483,18 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
 
   function isDelayWaypoint(waypoint) {
     return !!waypoint && waypoint.type === "delay";
+  }
+
+  function getNearbyCreatures() {
+    return bot.xray?.getVisibleMonsters?.({ sameFloorOnly: true }) || [];
+  }
+
+  function hasNearbyCreatures() {
+    return getNearbyCreatures().length > 0;
+  }
+
+  function shouldPauseForCreatures() {
+    return !!config.pauseUntilClear && hasNearbyCreatures();
   }
 
   function resetDelayState() {
@@ -1491,6 +1505,23 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
         });
       }
 
+      if (shouldPauseForCreatures()) {
+        if (!state.pausedForCreatures) {
+          state.pausedForCreatures = true;
+          const nearby = getNearbyCreatures();
+          bot.log("cave paused until area clear", {
+            creatureCount: nearby.length,
+            creatures: nearby.map((creature) => creature.name || "Mob"),
+          });
+        }
+        return;
+      }
+
+      if (state.pausedForCreatures) {
+        state.pausedForCreatures = false;
+        bot.log("cave resumed after area clear");
+      }
+
       if (positionKey && positionKey !== state.lastPositionKey) {
         state.lastPositionKey = positionKey;
         state.lastProgressAt = now;
@@ -1527,7 +1558,7 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
         }
       }
 
-      if (isAtWaypoint(position, waypoint)) {
+      if (isAtWaypoint(position, waypoint) && !isDelayWaypoint(waypoint)) {
         waypoint = advanceWaypoint();
       }
 
@@ -1610,6 +1641,7 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
     state.lastPositionKey = getPositionKey(position);
     state.lastProgressAt = Date.now();
     state.pausedForCombat = false;
+    state.pausedForCreatures = false;
     resetDelayState();
     bot.log("cave bot started", {
       waypoints: route.length,
@@ -1635,6 +1667,7 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
       persistConfig();
     }
     state.pausedForCombat = false;
+    state.pausedForCreatures = false;
     resetDelayState();
     bot.log("cave bot stopped");
     return true;
@@ -1761,6 +1794,8 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
       lastProgressAt: state.lastProgressAt,
       pendingTransitionSource: cloneValue(state.pendingTransitionSource),
       pausedForCombat: state.pausedForCombat,
+      pausedForCreatures: state.pausedForCreatures,
+      nearbyCreatureCount: getNearbyCreatures().length,
     };
   }
 

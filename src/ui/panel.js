@@ -290,7 +290,12 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
           Number.isFinite(status?.distanceToWaypoint) && status.distanceToWaypoint >= 0
             ? `, dist ${status.distanceToWaypoint}`
             : "";
-        statusLabel.textContent = `Status: running (${waypointNumber}/${route.length}${distanceLabel})`;
+        const pauseLabel = status?.pausedForCreatures
+          ? `, waiting (${status.nearbyCreatureCount || 0} creature${(status.nearbyCreatureCount || 0) === 1 ? "" : "s"})`
+          : status?.pausedForCombat
+            ? ", paused for combat"
+            : "";
+        statusLabel.textContent = `Status: running (${waypointNumber}/${route.length}${distanceLabel}${pauseLabel})`;
       } else {
         statusLabel.textContent = `Status: idle (${route.length} waypoint${route.length === 1 ? "" : "s"})`;
       }
@@ -1096,11 +1101,16 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
               </div>
               <div class="mb-small-note" id="minibia-bot-cave-closest">Closest start: no waypoints</div>
               <div class="mb-small-note" id="minibia-bot-cave-transition-status">Transitions learned: none</div>
+              <label class="mb-toggle">
+                <input type="checkbox" id="minibia-bot-cave-pause-until-clear" />
+                <span>Pause Until Clear</span>
+              </label>
               <div class="mb-actions mb-actions-inline-two">
                 <button type="button" class="mb-small-button" id="minibia-bot-cave-start">Start</button>
                 <button type="button" class="mb-small-button" id="minibia-bot-cave-stop">Stop</button>
               </div>
               <div class="mb-small-note" id="minibia-bot-cave-status">Status: no waypoints</div>
+              <div class="mb-small-note">When enabled, cave bot stops pathing while monsters are visible on your floor and only advances after the area is clear.</div>
             </div>
           </div>
           <div class="mb-section mb-column-section">
@@ -1189,6 +1199,7 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
     const caveRemoveLastButton = panel.querySelector("#minibia-bot-cave-remove-last");
     const caveStartButton = panel.querySelector("#minibia-bot-cave-start");
     const caveStopButton = panel.querySelector("#minibia-bot-cave-stop");
+    const cavePauseUntilClearInput = panel.querySelector("#minibia-bot-cave-pause-until-clear");
     const cavePresetSelect = panel.querySelector("#minibia-bot-cave-preset-select");
     const cavePresetNewButton = panel.querySelector("#minibia-bot-cave-preset-new");
     const cavePresetDeleteButton = panel.querySelector("#minibia-bot-cave-preset-delete");
@@ -1413,6 +1424,14 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
         refreshCaveStatus();
         refreshCaveClosestStatus();
         refreshCaveTransitionStatus();
+      });
+    }
+
+    if (cavePauseUntilClearInput) {
+      cavePauseUntilClearInput.checked = bot.cave?.config?.pauseUntilClear !== false;
+      cavePauseUntilClearInput.addEventListener("change", () => {
+        bot.cave.updateConfig({ pauseUntilClear: cavePauseUntilClearInput.checked });
+        refreshCaveStatus();
       });
     }
 
