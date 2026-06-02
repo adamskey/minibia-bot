@@ -486,7 +486,13 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
   }
 
   function getNearbyCreatures() {
-    return bot.xray?.getVisibleMonsters?.({ sameFloorOnly: true }) || [];
+    const targetNames = bot.attack?.config?.targetNames;
+    const hasTargetFilter = Array.isArray(targetNames) && targetNames.length > 0;
+    if (!hasTargetFilter) {
+      return [];
+    }
+
+    return bot.attack?.getNearbyMonsters?.() || [];
   }
 
   function hasNearbyCreatures() {

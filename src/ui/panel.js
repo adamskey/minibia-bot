@@ -1110,7 +1110,7 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
                 <button type="button" class="mb-small-button" id="minibia-bot-cave-stop">Stop</button>
               </div>
               <div class="mb-small-note" id="minibia-bot-cave-status">Status: no waypoints</div>
-              <div class="mb-small-note">When enabled, cave bot stops pathing while monsters are visible on your floor and only advances after the area is clear.</div>
+              <div class="mb-small-note">When enabled, cave bot pauses only while Auto Attack target names (e.g. Rotworm) are visible on your floor. Other creatures are ignored.</div>
             </div>
           </div>
           <div class="mb-section mb-column-section">
