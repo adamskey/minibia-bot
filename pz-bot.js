@@ -468,6 +468,7 @@ window.__minibiaBotBundle.createBot = function createBot() {
     },
   };
 };
+
 window.__minibiaBotBundle = window.__minibiaBotBundle || {};
 
 window.__minibiaBotBundle.installPzModule = function installPzModule(bot) {
@@ -663,6 +664,7 @@ window.__minibiaBotBundle.installPzModule = function installPzModule(bot) {
   bot.clearHomePz = clearHomePz;
   bot.goToHomePz = goToHomePz;
 };
+
 window.__minibiaBotBundle = window.__minibiaBotBundle || {};
 
 window.__minibiaBotBundle.installXrayModule = function installXrayModule(bot) {
@@ -1110,6 +1112,7 @@ window.__minibiaBotBundle.installXrayModule = function installXrayModule(bot) {
   }
   bot.addCleanup(stopOverlay);
 };
+
 window.__minibiaBotBundle = window.__minibiaBotBundle || {};
 
 window.__minibiaBotBundle.installPanicModule = function installPanicModule(bot) {
@@ -1710,6 +1713,7 @@ window.__minibiaBotBundle.installPanicModule = function installPanicModule(bot) 
     config,
   };
 };
+
 window.__minibiaBotBundle = window.__minibiaBotBundle || {};
 
 window.__minibiaBotBundle.installRuneModule = function installRuneModule(bot) {
@@ -1952,6 +1956,7 @@ window.__minibiaBotBundle.installRuneModule = function installRuneModule(bot) {
   bot.startRuneLoop = start;
   bot.stopRuneLoop = stop;
 };
+
 window.__minibiaBotBundle = window.__minibiaBotBundle || {};
 
 window.__minibiaBotBundle.installHealModule = function installHealModule(bot) {
@@ -2273,6 +2278,7 @@ window.__minibiaBotBundle.installHealModule = function installHealModule(bot) {
     config,
   };
 };
+
 window.__minibiaBotBundle = window.__minibiaBotBundle || {};
 
 window.__minibiaBotBundle.installAutoInvisibleModule = function installAutoInvisibleModule(bot) {
@@ -2489,6 +2495,7 @@ window.__minibiaBotBundle.installAutoInvisibleModule = function installAutoInvis
     config,
   };
 };
+
 window.__minibiaBotBundle = window.__minibiaBotBundle || {};
 
 window.__minibiaBotBundle.installAutoMagicShieldModule = function installAutoMagicShieldModule(bot) {
@@ -2727,6 +2734,7 @@ window.__minibiaBotBundle.installAutoMagicShieldModule = function installAutoMag
     config,
   };
 };
+
 window.__minibiaBotBundle = window.__minibiaBotBundle || {};
 
 window.__minibiaBotBundle.installAutoAttackModule = function installAutoAttackModule(bot) {
@@ -3485,6 +3493,7 @@ window.__minibiaBotBundle.installAutoAttackModule = function installAutoAttackMo
     config,
   };
 };
+
 window.__minibiaBotBundle = window.__minibiaBotBundle || {};
 
 window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
@@ -3517,6 +3526,8 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
     lastObservedPosition: null,
     pendingTransitionSource: null,
     pausedForCombat: false,
+    delayUntil: 0,
+    delayWaypointIndex: null,
   };
   const minimapOverlayState = {
     timerId: null,
@@ -3710,7 +3721,31 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
   }
 
   function normalizeWaypoint(waypoint) {
-    return normalizePosition(waypoint);
+    if (!waypoint) {
+      return null;
+    }
+
+    const type = String(waypoint.type || "").trim().toLowerCase();
+    if (type === "delay") {
+      const seconds = Math.max(1, Math.trunc(Number(waypoint.seconds)));
+      if (!Number.isFinite(seconds) || seconds <= 0) {
+        return null;
+      }
+      return {
+        type: "delay",
+        seconds,
+      };
+    }
+
+    const position = normalizePosition(waypoint);
+    if (!position) {
+      return null;
+    }
+
+    return {
+      type: "position",
+      ...position,
+    };
   }
 
   function normalizeRoute(value) {
@@ -3890,12 +3925,21 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
     return route[state.currentIndex] || null;
   }
 
+  function isDelayWaypoint(waypoint) {
+    return !!waypoint && waypoint.type === "delay";
+  }
+
+  function resetDelayState() {
+    state.delayUntil = 0;
+    state.delayWaypointIndex = null;
+  }
+
   function getPositionKey(position) {
     return position ? `${position.x},${position.y},${position.z}` : null;
   }
 
   function getDistance(from, to) {
-    if (!from || !to || Number(from.z) !== Number(to.z)) {
+    if (!from || !to || isDelayWaypoint(from) || isDelayWaypoint(to) || Number(from.z) !== Number(to.z)) {
       return Number.POSITIVE_INFINITY;
     }
 
@@ -3922,7 +3966,7 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
   }
 
   function getDistanceToWaypoint(position, waypoint) {
-    if (!position || !waypoint) {
+    if (!position || !waypoint || isDelayWaypoint(waypoint)) {
       return null;
     }
 
@@ -3948,6 +3992,10 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
     let bestDistance = Number.POSITIVE_INFINITY;
 
     route.forEach((waypoint, index) => {
+      if (isDelayWaypoint(waypoint)) {
+        return;
+      }
+
       const distance = getDistanceToWaypoint(position, waypoint);
       if (!Number.isFinite(distance)) {
         return;
@@ -3959,7 +4007,12 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
       }
     });
 
-    return bestIndex;
+    if (Number.isFinite(bestDistance)) {
+      return bestIndex;
+    }
+
+    const firstPositionIndex = route.findIndex((waypoint) => !isDelayWaypoint(waypoint));
+    return firstPositionIndex >= 0 ? firstPositionIndex : 0;
   }
 
   function getTileAt(position) {
@@ -4217,6 +4270,9 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
     if (!waypoint || !viewport || !playerPosition || !minimap) {
       return null;
     }
+    if (isDelayWaypoint(waypoint)) {
+      return null;
+    }
 
     if (waypoint.z !== minimap.__renderLayer) {
       return null;
@@ -4461,7 +4517,7 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
 
   function goToWaypoint(waypoint) {
     const from = bot.getPlayerPosition();
-    if (!from || !waypoint) {
+    if (!from || !waypoint || isDelayWaypoint(waypoint)) {
       return false;
     }
 
@@ -4825,6 +4881,7 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
     state.currentIndex = Math.max(0, Math.min(route.length - 1, nextIndex));
 
     const nextWaypoint = getCurrentWaypoint();
+    resetDelayState();
     bot.log("cave advanced waypoint", {
       index: state.currentIndex + 1,
       total: route.length,
@@ -4891,6 +4948,31 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
         return;
       }
 
+      if (isDelayWaypoint(waypoint)) {
+        if (state.delayWaypointIndex !== state.currentIndex || !state.delayUntil) {
+          state.delayWaypointIndex = state.currentIndex;
+          state.delayUntil = now + (Math.max(1, Number(waypoint.seconds) || 1) * 1000);
+          bot.log("cave delay started", {
+            index: state.currentIndex + 1,
+            total: route.length,
+            seconds: Math.max(1, Number(waypoint.seconds) || 1),
+          });
+        }
+
+        if (now < state.delayUntil) {
+          return;
+        }
+
+        bot.log("cave delay completed", {
+          index: state.currentIndex + 1,
+          total: route.length,
+        });
+        waypoint = advanceWaypoint();
+        if (!waypoint) {
+          return;
+        }
+      }
+
       if (isAtWaypoint(position, waypoint)) {
         waypoint = advanceWaypoint();
       }
@@ -4952,6 +5034,12 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
       return false;
     }
 
+    const hasPositionWaypoint = route.some((waypoint) => !isDelayWaypoint(waypoint));
+    if (!hasPositionWaypoint) {
+      bot.log("cave bot cannot start without position waypoints");
+      return false;
+    }
+
     if (state.running) {
       bot.log("cave bot already running");
       return false;
@@ -4968,6 +5056,7 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
     state.lastPositionKey = getPositionKey(position);
     state.lastProgressAt = Date.now();
     state.pausedForCombat = false;
+    resetDelayState();
     bot.log("cave bot started", {
       waypoints: route.length,
       currentIndex: state.currentIndex + 1,
@@ -4992,6 +5081,7 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
       persistConfig();
     }
     state.pausedForCombat = false;
+    resetDelayState();
     bot.log("cave bot stopped");
     return true;
   }
@@ -5018,10 +5108,28 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
     return addWaypoint(position);
   }
 
+  function addDelay(seconds) {
+    const normalizedSeconds = Math.max(1, Math.trunc(Number(seconds) || 0));
+    if (!Number.isFinite(normalizedSeconds) || normalizedSeconds <= 0) {
+      bot.log("invalid cave delay", { seconds });
+      return null;
+    }
+
+    const delayWaypoint = {
+      type: "delay",
+      seconds: normalizedSeconds,
+    };
+    route.push(delayWaypoint);
+    persistRoute();
+    bot.log("cave delay added", { ...delayWaypoint, total: route.length });
+    return cloneValue(delayWaypoint);
+  }
+
   function clearWaypoints() {
     route = [];
     state.currentIndex = 0;
     state.direction = 1;
+    resetDelayState();
     persistRoute();
     bot.log("cave route cleared");
 
@@ -5048,6 +5156,7 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
     const removed = route.pop();
     if (state.currentIndex >= route.length) {
       state.currentIndex = Math.max(0, route.length - 1);
+      resetDelayState();
     }
     if (route.length <= 1) {
       state.direction = 1;
@@ -5071,6 +5180,7 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
 
     const nextIndex = Math.max(0, Math.min(route.length - 1, Math.trunc(Number(index) || 0)));
     state.currentIndex = nextIndex;
+    resetDelayState();
     state.direction = nextIndex >= route.length - 1 ? -1 : 1;
     if (route.length <= 1) {
       state.direction = 1;
@@ -5134,6 +5244,7 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
     deletePreset,
     addWaypoint,
     addWaypointCurrentSpot,
+    addDelay,
     clearWaypoints,
     clearTransitions,
     removeLastWaypoint,
@@ -5170,6 +5281,7 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
     isAtWaypoint,
   };
 };
+
 window.__minibiaBotBundle = window.__minibiaBotBundle || {};
 
 window.__minibiaBotBundle.installEquipRingModule = function installEquipRingModule(bot) {
@@ -5466,6 +5578,7 @@ window.__minibiaBotBundle.installEquipRingModule = function installEquipRingModu
     tryEquipRing,
   };
 };
+
 window.__minibiaBotBundle = window.__minibiaBotBundle || {};
 
 window.__minibiaBotBundle.installAutoEatModule = function installAutoEatModule(bot) {
@@ -5669,6 +5782,7 @@ window.__minibiaBotBundle.installAutoEatModule = function installAutoEatModule(b
     bot.rune.isSated = isSated;
   }
 };
+
 window.__minibiaBotBundle = window.__minibiaBotBundle || {};
 
 window.__minibiaBotBundle.installTalkModule = function installTalkModule(bot) {
@@ -6341,6 +6455,7 @@ window.__minibiaBotBundle.installTalkModule = function installTalkModule(bot) {
     config,
   };
 };
+
 window.__minibiaBotBundle = window.__minibiaBotBundle || {};
 
 window.__minibiaBotBundle.installPanel = function installPanel(bot) {
@@ -6666,7 +6781,8 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
       return;
     }
 
-    if (!route.length) {
+    const positionWaypoints = route.filter((waypoint) => waypoint?.type !== "delay");
+    if (!positionWaypoints.length) {
       label.textContent = "Closest start: no waypoints";
       return;
     }
@@ -7388,7 +7504,11 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
               </div>
               <div class="mb-actions mb-actions-inline-two">
                 <button type="button" class="mb-small-button" id="minibia-bot-cave-record">Record Spot</button>
+                <button type="button" class="mb-small-button" id="minibia-bot-cave-add-delay">Add Delay</button>
+              </div>
+              <div class="mb-actions mb-actions-inline-two">
                 <button type="button" class="mb-small-button" id="minibia-bot-cave-remove-last">Remove Last</button>
+                <div></div>
               </div>
               <div class="mb-small-note" id="minibia-bot-cave-closest">Closest start: no waypoints</div>
               <div class="mb-small-note" id="minibia-bot-cave-transition-status">Transitions learned: none</div>
@@ -7474,6 +7594,7 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
     const collapseButton = panel.querySelector("#minibia-bot-collapse");
     const reloadButton = panel.querySelector("#minibia-bot-reload");
     const caveRecordButton = panel.querySelector("#minibia-bot-cave-record");
+    const caveAddDelayButton = panel.querySelector("#minibia-bot-cave-add-delay");
     const caveRemoveLastButton = panel.querySelector("#minibia-bot-cave-remove-last");
     const caveStartButton = panel.querySelector("#minibia-bot-cave-start");
     const caveStopButton = panel.querySelector("#minibia-bot-cave-stop");
@@ -7666,6 +7787,27 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
       caveRecordButton.addEventListener("click", () => {
         bot.cave.addWaypointCurrentSpot();
         refreshCavePresetControls();
+        refreshCaveClosestStatus();
+        refreshCaveTransitionStatus();
+      });
+    }
+
+    if (caveAddDelayButton) {
+      caveAddDelayButton.addEventListener("click", () => {
+        const response = window.prompt("Delay in seconds:", "90");
+        if (response == null) {
+          return;
+        }
+
+        const seconds = Math.max(1, Math.trunc(Number(response) || 0));
+        if (!Number.isFinite(seconds) || seconds <= 0) {
+          window.alert("Please enter a valid number greater than 0.");
+          return;
+        }
+
+        bot.cave.addDelay(seconds);
+        refreshCavePresetControls();
+        refreshCaveStatus();
         refreshCaveClosestStatus();
         refreshCaveTransitionStatus();
       });
@@ -8022,6 +8164,7 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
     },
   };
 };
+
 (() => {
   const bundle = window.__minibiaBotBundle || window.__minibiaBotReloadBundle || {};
   const persistedEnabledModules = [

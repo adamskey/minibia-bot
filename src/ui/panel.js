@@ -323,7 +323,8 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
       return;
     }
 
-    if (!route.length) {
+    const positionWaypoints = route.filter((waypoint) => waypoint?.type !== "delay");
+    if (!positionWaypoints.length) {
       label.textContent = "Closest start: no waypoints";
       return;
     }
@@ -1045,7 +1046,11 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
               </div>
               <div class="mb-actions mb-actions-inline-two">
                 <button type="button" class="mb-small-button" id="minibia-bot-cave-record">Record Spot</button>
+                <button type="button" class="mb-small-button" id="minibia-bot-cave-add-delay">Add Delay</button>
+              </div>
+              <div class="mb-actions mb-actions-inline-two">
                 <button type="button" class="mb-small-button" id="minibia-bot-cave-remove-last">Remove Last</button>
+                <div></div>
               </div>
               <div class="mb-small-note" id="minibia-bot-cave-closest">Closest start: no waypoints</div>
               <div class="mb-small-note" id="minibia-bot-cave-transition-status">Transitions learned: none</div>
@@ -1131,6 +1136,7 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
     const collapseButton = panel.querySelector("#minibia-bot-collapse");
     const reloadButton = panel.querySelector("#minibia-bot-reload");
     const caveRecordButton = panel.querySelector("#minibia-bot-cave-record");
+    const caveAddDelayButton = panel.querySelector("#minibia-bot-cave-add-delay");
     const caveRemoveLastButton = panel.querySelector("#minibia-bot-cave-remove-last");
     const caveStartButton = panel.querySelector("#minibia-bot-cave-start");
     const caveStopButton = panel.querySelector("#minibia-bot-cave-stop");
@@ -1323,6 +1329,27 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
       caveRecordButton.addEventListener("click", () => {
         bot.cave.addWaypointCurrentSpot();
         refreshCavePresetControls();
+        refreshCaveClosestStatus();
+        refreshCaveTransitionStatus();
+      });
+    }
+
+    if (caveAddDelayButton) {
+      caveAddDelayButton.addEventListener("click", () => {
+        const response = window.prompt("Delay in seconds:", "90");
+        if (response == null) {
+          return;
+        }
+
+        const seconds = Math.max(1, Math.trunc(Number(response) || 0));
+        if (!Number.isFinite(seconds) || seconds <= 0) {
+          window.alert("Please enter a valid number greater than 0.");
+          return;
+        }
+
+        bot.cave.addDelay(seconds);
+        refreshCavePresetControls();
+        refreshCaveStatus();
         refreshCaveClosestStatus();
         refreshCaveTransitionStatus();
       });
