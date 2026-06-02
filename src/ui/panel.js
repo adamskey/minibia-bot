@@ -236,6 +236,44 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
     autoAttackToggle.checked = !!bot.attack?.status?.().running;
   }
 
+  function renderAttackTargetNames() {
+    const list = document.getElementById("minibia-bot-auto-attack-target-list");
+    if (!list) return;
+
+    const targetNames = bot.attack?.config?.targetNames || [];
+    list.innerHTML = "";
+
+    if (!targetNames.length) {
+      const empty = document.createElement("div");
+      empty.className = "mb-small-note";
+      empty.textContent = "No target names saved. Attacks all visible monsters.";
+      list.appendChild(empty);
+      return;
+    }
+
+    targetNames.forEach((name, index) => {
+      const row = document.createElement("div");
+      row.className = "mb-list-row";
+
+      const label = document.createElement("span");
+      label.textContent = name;
+
+      const removeButton = document.createElement("button");
+      removeButton.type = "button";
+      removeButton.className = "mb-small-button";
+      removeButton.textContent = "Remove";
+      removeButton.addEventListener("click", () => {
+        const nextNames = targetNames.filter((_, currentIndex) => currentIndex !== index);
+        bot.attack.updateConfig({ targetNames: nextNames });
+        renderAttackTargetNames();
+      });
+
+      row.appendChild(label);
+      row.appendChild(removeButton);
+      list.appendChild(row);
+    });
+  }
+
   function refreshCaveStatus() {
     const statusLabel = document.getElementById("minibia-bot-cave-status");
     const startButton = document.getElementById("minibia-bot-cave-start");
@@ -1045,6 +1083,10 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
                 <button type="button" class="mb-small-button" id="minibia-bot-cave-preset-delete">Delete</button>
               </div>
               <div class="mb-actions mb-actions-inline-two">
+                <button type="button" class="mb-small-button" id="minibia-bot-cave-preset-export">Export</button>
+                <button type="button" class="mb-small-button" id="minibia-bot-cave-preset-import">Import</button>
+              </div>
+              <div class="mb-actions mb-actions-inline-two">
                 <button type="button" class="mb-small-button" id="minibia-bot-cave-record">Record Spot</button>
                 <button type="button" class="mb-small-button" id="minibia-bot-cave-add-delay">Add Delay</button>
               </div>
@@ -1080,7 +1122,12 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
                 <span class="mb-field-label">Rune Hotkey (1-12)</span>
                 <input type="number" id="minibia-bot-auto-attack-rune-hotkey" min="1" max="12" placeholder="4" />
               </label>
-              <div class="mb-small-note">Melee mode uses the target hotkey, then walks adjacent to the target. Non-melee mode uses the target hotkey to acquire a target and the rune hotkey to cast on that target.</div>
+              <div class="mb-inline">
+                <input type="text" id="minibia-bot-auto-attack-target-input" placeholder="Target name (e.g. Rotworm)" />
+                <button type="button" class="mb-small-button" id="minibia-bot-auto-attack-target-add">Add</button>
+              </div>
+              <div class="mb-list" id="minibia-bot-auto-attack-target-list"></div>
+              <div class="mb-small-note">Melee mode uses the target hotkey, then walks adjacent to the target. Non-melee mode uses the target hotkey to acquire a target and the rune hotkey to cast on that target. Leave target names empty to attack any monster; add names to attack only those creatures (skips NPCs and other mobs).</div>
             </div>
           </div>
         </div>
@@ -1121,6 +1168,8 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
     const autoAttackMeleeInput = panel.querySelector("#minibia-bot-auto-attack-melee");
     const autoAttackHotkeyInput = panel.querySelector("#minibia-bot-auto-attack-hotkey");
     const autoAttackRuneHotkeyInput = panel.querySelector("#minibia-bot-auto-attack-rune-hotkey");
+    const autoAttackTargetInput = panel.querySelector("#minibia-bot-auto-attack-target-input");
+    const autoAttackTargetAddButton = panel.querySelector("#minibia-bot-auto-attack-target-add");
     const talkEnabledInput = panel.querySelector("#minibia-bot-talk-enabled");
     const talkApiKeyInput = panel.querySelector("#minibia-bot-talk-api-key");
     const talkPromptInput = panel.querySelector("#minibia-bot-talk-prompt");
@@ -1143,6 +1192,8 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
     const cavePresetSelect = panel.querySelector("#minibia-bot-cave-preset-select");
     const cavePresetNewButton = panel.querySelector("#minibia-bot-cave-preset-new");
     const cavePresetDeleteButton = panel.querySelector("#minibia-bot-cave-preset-delete");
+    const cavePresetExportButton = panel.querySelector("#minibia-bot-cave-preset-export");
+    const cavePresetImportButton = panel.querySelector("#minibia-bot-cave-preset-import");
 
     if (collapseButton) {
       collapseButton.addEventListener("click", () => {
@@ -1440,6 +1491,55 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
       });
     }
 
+    if (cavePresetExportButton) {
+      cavePresetExportButton.addEventListener("click", async () => {
+        const payload = bot.cave?.exportPresets?.();
+        if (!payload) {
+          window.alert("Could not export cave presets.");
+          return;
+        }
+
+        const serialized = JSON.stringify(payload, null, 2);
+        let copiedToClipboard = false;
+        try {
+          if (navigator?.clipboard?.writeText) {
+            await navigator.clipboard.writeText(serialized);
+            copiedToClipboard = true;
+          }
+        } catch (error) {
+          copiedToClipboard = false;
+        }
+
+        if (copiedToClipboard) {
+          window.alert("Cave presets copied to clipboard.");
+          return;
+        }
+
+        window.prompt("Copy your cave presets JSON:", serialized);
+      });
+    }
+
+    if (cavePresetImportButton) {
+      cavePresetImportButton.addEventListener("click", () => {
+        const input = window.prompt("Paste cave presets JSON to import:");
+        if (input == null) {
+          return;
+        }
+
+        const imported = bot.cave?.importPresets?.(input);
+        if (!imported) {
+          window.alert("Import failed. Please verify your JSON.");
+          return;
+        }
+
+        refreshCavePresetControls();
+        refreshCaveStatus();
+        refreshCaveClosestStatus();
+        refreshCaveTransitionStatus();
+        window.alert(`Imported ${imported.presets?.length || 0} cave preset(s).`);
+      });
+    }
+
     if (autoHealMinHpInput) {
       autoHealMinHpInput.value = String(bot.heal?.config?.minHp ?? 0);
       autoHealMinHpInput.addEventListener("change", () => {
@@ -1527,6 +1627,41 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
       autoAttackMeleeInput.checked = bot.attack?.config?.meleeMode !== false;
       autoAttackMeleeInput.addEventListener("change", () => {
         bot.attack.updateConfig({ meleeMode: autoAttackMeleeInput.checked });
+      });
+    }
+
+    function addAttackTargetName() {
+      const rawName = autoAttackTargetInput?.value?.trim() || "";
+      if (!rawName) {
+        return;
+      }
+
+      const currentNames = bot.attack?.config?.targetNames || [];
+      const exists = currentNames.some(
+        (name) => String(name).trim().toLowerCase() === rawName.toLowerCase()
+      );
+
+      if (!exists) {
+        bot.attack.updateConfig({ targetNames: [...currentNames, rawName] });
+      }
+
+      if (autoAttackTargetInput) {
+        autoAttackTargetInput.value = "";
+      }
+
+      renderAttackTargetNames();
+    }
+
+    if (autoAttackTargetAddButton) {
+      autoAttackTargetAddButton.addEventListener("click", addAttackTargetName);
+    }
+
+    if (autoAttackTargetInput) {
+      autoAttackTargetInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          addAttackTargetName();
+        }
       });
     }
 
@@ -1648,6 +1783,7 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
     refreshAutoInvisibleStatus();
     refreshAutoMagicShieldStatus();
     refreshAutoAttackStatus();
+    renderAttackTargetNames();
     refreshAutoEatStatus();
     refreshCaveStatus();
     refreshEquipRingStatus();
@@ -1690,6 +1826,7 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
     refreshAutoInvisibleStatus,
     refreshAutoMagicShieldStatus,
     refreshAutoAttackStatus,
+    renderAttackTargetNames,
     refreshAutoEatStatus,
     refreshCaveStatus,
     refreshCavePresetControls,

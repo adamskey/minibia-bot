@@ -417,6 +417,56 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
     return true;
   }
 
+  function exportPresets() {
+    return {
+      version: 1,
+      activePresetName: getActivePresetName(),
+      presets: presets.map((preset) => ({
+        name: preset.name,
+        route: preset.route.map((waypoint) => cloneValue(waypoint)),
+        transitions: preset.transitions.map((transition) => cloneValue(transition)),
+      })),
+    };
+  }
+
+  function importPresets(value) {
+    let parsed = value;
+    if (typeof value === "string") {
+      try {
+        parsed = JSON.parse(value);
+      } catch (error) {
+        bot.log("cave preset import failed: invalid JSON", error?.message || error);
+        return null;
+      }
+    }
+
+    const payload = parsed && typeof parsed === "object" ? parsed : null;
+    const importedPresets = normalizePresets(payload?.presets || payload);
+    if (!importedPresets.length) {
+      bot.log("cave preset import failed: no valid presets found");
+      return null;
+    }
+
+    if (state.running) {
+      stop();
+    }
+
+    presets = importedPresets;
+    persistPresets();
+
+    const requestedActiveName = normalizePresetName(payload?.activePresetName);
+    const targetActivePreset = getPresetByName(requestedActiveName) || presets[0];
+    if (targetActivePreset) {
+      loadPresetState(targetActivePreset.name);
+    }
+
+    bot.log("cave presets imported", {
+      presets: presets.length,
+      activePresetName: getActivePresetName(),
+    });
+    return exportPresets();
+  }
+
   function getCurrentWaypoint() {
     if (!route.length) {
       return null;
@@ -1746,6 +1796,8 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
     savePreset,
     loadPreset,
     deletePreset,
+    exportPresets,
+    importPresets,
     addWaypoint,
     addWaypointCurrentSpot,
     addDelay,

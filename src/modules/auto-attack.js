@@ -28,16 +28,53 @@ window.__minibiaBotBundle.installAutoAttackModule = function installAutoAttackMo
       runeCooldownMs: 1200,
       maxTargetDistance: 8,
       meleeMode: true,
+      targetNames: [],
       enabled: false,
     },
     storedConfig
   );
+  config.targetNames = normalizeTargetNames(config.targetNames);
   if (config.targetHotbarSlot == null && storedConfig.hotbarSlot != null) {
     config.targetHotbarSlot = storedConfig.hotbarSlot;
   }
 
   function persistConfig() {
     bot.storage.set(configStorageKey, { ...config });
+  }
+
+  function normalizeTargetNames(value) {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    const deduped = new Map();
+    value.forEach((name) => {
+      const normalized = String(name || "").trim();
+      if (!normalized) {
+        return;
+      }
+
+      deduped.set(normalized.toLowerCase(), normalized);
+    });
+    return Array.from(deduped.values());
+  }
+
+  function getCreatureName(creature) {
+    return String(creature?.name || "").trim();
+  }
+
+  function isAllowedTarget(creature) {
+    const allowedNames = normalizeTargetNames(config.targetNames);
+    if (!allowedNames.length) {
+      return true;
+    }
+
+    const name = getCreatureName(creature).toLowerCase();
+    if (!name) {
+      return false;
+    }
+
+    return allowedNames.some((allowed) => allowed.toLowerCase() === name);
   }
 
   function normalizeHotbarSlot(slot) {
@@ -55,7 +92,8 @@ window.__minibiaBotBundle.installAutoAttackModule = function installAutoAttackMo
   }
 
   function getNearbyMonsters() {
-    return bot.xray?.getVisibleMonsters?.({ sameFloorOnly: true }) || [];
+    return (bot.xray?.getVisibleMonsters?.({ sameFloorOnly: true }) || [])
+      .filter((creature) => isAllowedTarget(creature));
   }
 
   function normalizePosition(value) {
@@ -224,6 +262,11 @@ window.__minibiaBotBundle.installAutoAttackModule = function installAutoAttackMo
   function getEngagedTarget() {
     const currentTarget = getCurrentTarget();
     if (currentTarget) {
+      if (!isAllowedTarget(currentTarget)) {
+        skipTarget(currentTarget, "not in target name list", Date.now(), 60000);
+        return null;
+      }
+
       state.engagedTargetId = currentTarget.id;
       return currentTarget;
     }
@@ -234,7 +277,17 @@ window.__minibiaBotBundle.installAutoAttackModule = function installAutoAttackMo
 
     const followTarget = getCurrentFollowTarget();
     if (followTarget && followTarget.id === state.engagedTargetId) {
-      return findNearbyMonster(followTarget) || followTarget;
+      const nearbyFollowTarget = findNearbyMonster(followTarget);
+      if (nearbyFollowTarget) {
+        return nearbyFollowTarget;
+      }
+
+      if (!isAllowedTarget(followTarget)) {
+        skipTarget(followTarget, "not in target name list", Date.now(), 60000);
+        return null;
+      }
+
+      return followTarget;
     }
 
     const nearbyTarget = findNearbyMonsterById(state.engagedTargetId);
@@ -721,6 +774,10 @@ window.__minibiaBotBundle.installAutoAttackModule = function installAutoAttackMo
 
     if (Object.prototype.hasOwnProperty.call(nextConfig, "maxTargetDistance")) {
       nextConfig.maxTargetDistance = Math.max(1, Math.trunc(Number(nextConfig.maxTargetDistance) || config.maxTargetDistance || 8));
+    }
+
+    if (Object.prototype.hasOwnProperty.call(nextConfig, "targetNames")) {
+      nextConfig.targetNames = normalizeTargetNames(nextConfig.targetNames);
     }
 
     Object.assign(config, nextConfig);
