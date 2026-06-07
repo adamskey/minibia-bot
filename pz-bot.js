@@ -3787,6 +3787,7 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
     pendingTransitionSource: null,
     pausedForCombat: false,
     pausedForCreatures: false,
+    pausedForSpawn: false,
     delayUntil: 0,
     delayWaypointIndex: null,
   };
@@ -3800,6 +3801,8 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
       repathMs: 1500,
       waypointTolerance: 0,
       pauseUntilClear: true,
+      pauseUntilSpawn: false,
+      pauseUntilSpawnFloorOffset: 1,
       enabled: false,
       activePresetName: defaultPresetName,
     },
@@ -4257,6 +4260,86 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
 
   function shouldPauseForCreatures() {
     return !!config.pauseUntilClear && hasNearbyCreatures();
+  }
+
+  function getAttackTargetNames() {
+    const targetNames = bot.attack?.config?.targetNames;
+    if (!Array.isArray(targetNames)) {
+      return [];
+    }
+
+    const deduped = new Map();
+    targetNames.forEach((name) => {
+      const normalized = String(name || "").trim();
+      if (!normalized) {
+        return;
+      }
+
+      deduped.set(normalized.toLowerCase(), normalized);
+    });
+    return Array.from(deduped.values());
+  }
+
+  function normalizeSpawnFloorOffset(value) {
+    if (!Number.isFinite(Number(value))) {
+      return 0;
+    }
+
+    return Math.trunc(Number(value));
+  }
+
+  function getSpawnWatchFloor(position = normalizePosition(bot.getPlayerPosition())) {
+    if (!position) {
+      return null;
+    }
+
+    return position.z - normalizeSpawnFloorOffset(config.pauseUntilSpawnFloorOffset);
+  }
+
+  function isTargetMonster(creature, targetNames) {
+    const name = String(creature?.name || "").trim().toLowerCase();
+    if (!name) {
+      return false;
+    }
+
+    return targetNames.some((targetName) => targetName.toLowerCase() === name);
+  }
+
+  function getSpawnFloorMonsters(position = normalizePosition(bot.getPlayerPosition())) {
+    const targetNames = getAttackTargetNames();
+    const targetFloor = getSpawnWatchFloor(position);
+    if (!targetNames.length || targetFloor == null) {
+      return [];
+    }
+
+    return (bot.xray?.getVisibleMonsters?.() || []).filter((creature) => {
+      const creatureFloor = Number(creature?.__position?.z ?? creature?.getPosition?.()?.z);
+      if (!Number.isFinite(creatureFloor) || creatureFloor !== targetFloor) {
+        return false;
+      }
+
+      return isTargetMonster(creature, targetNames);
+    });
+  }
+
+  function hasSpawnFloorMonster(position = normalizePosition(bot.getPlayerPosition())) {
+    return getSpawnFloorMonsters(position).length > 0;
+  }
+
+  function shouldPauseForSpawn(position, waypoint) {
+    if (!config.pauseUntilSpawn || !getAttackTargetNames().length) {
+      return false;
+    }
+
+    if (hasSpawnFloorMonster(position)) {
+      return false;
+    }
+
+    if (state.pausedForSpawn) {
+      return true;
+    }
+
+    return isAtWaypoint(position, waypoint) && !isDelayWaypoint(waypoint);
   }
 
   function resetDelayState() {
@@ -5284,15 +5367,37 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
         bot.log("cave resumed after area clear");
       }
 
-      if (positionKey && positionKey !== state.lastPositionKey) {
-        state.lastPositionKey = positionKey;
-        state.lastProgressAt = now;
-      }
-
       let waypoint = getCurrentWaypoint();
       if (!waypoint) {
         stop();
         return;
+      }
+
+      if (shouldPauseForSpawn(position, waypoint)) {
+        if (!state.pausedForSpawn) {
+          state.pausedForSpawn = true;
+          bot.log("cave paused until target monster spawns", {
+            floorOffset: normalizeSpawnFloorOffset(config.pauseUntilSpawnFloorOffset),
+            watchFloor: getSpawnWatchFloor(position),
+            targetNames: getAttackTargetNames(),
+          });
+        }
+        return;
+      }
+
+      if (state.pausedForSpawn) {
+        state.pausedForSpawn = false;
+        const spawned = getSpawnFloorMonsters(position);
+        bot.log("cave resumed after target monster spawned", {
+          floorOffset: normalizeSpawnFloorOffset(config.pauseUntilSpawnFloorOffset),
+          watchFloor: getSpawnWatchFloor(position),
+          creatures: spawned.map((creature) => creature.name || "Mob"),
+        });
+      }
+
+      if (positionKey && positionKey !== state.lastPositionKey) {
+        state.lastPositionKey = positionKey;
+        state.lastProgressAt = now;
       }
 
       if (isDelayWaypoint(waypoint)) {
@@ -5404,6 +5509,7 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
     state.lastProgressAt = Date.now();
     state.pausedForCombat = false;
     state.pausedForCreatures = false;
+    state.pausedForSpawn = false;
     resetDelayState();
     bot.log("cave bot started", {
       waypoints: route.length,
@@ -5430,6 +5536,7 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
     }
     state.pausedForCombat = false;
     state.pausedForCreatures = false;
+    state.pausedForSpawn = false;
     resetDelayState();
     bot.log("cave bot stopped");
     return true;
@@ -5557,11 +5664,19 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
       pendingTransitionSource: cloneValue(state.pendingTransitionSource),
       pausedForCombat: state.pausedForCombat,
       pausedForCreatures: state.pausedForCreatures,
+      pausedForSpawn: state.pausedForSpawn,
       nearbyCreatureCount: getNearbyCreatures().length,
+      spawnFloorCreatureCount: getSpawnFloorMonsters(position).length,
+      spawnWatchFloor: getSpawnWatchFloor(position),
+      spawnFloorOffset: normalizeSpawnFloorOffset(config.pauseUntilSpawnFloorOffset),
     };
   }
 
   function updateConfig(nextConfig = {}) {
+    if (Object.prototype.hasOwnProperty.call(nextConfig, "pauseUntilSpawnFloorOffset")) {
+      nextConfig.pauseUntilSpawnFloorOffset = normalizeSpawnFloorOffset(nextConfig.pauseUntilSpawnFloorOffset);
+    }
+
     Object.assign(config, nextConfig);
     config.tickMs = 500;
     persistConfig();
@@ -7101,11 +7216,13 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
           Number.isFinite(status?.distanceToWaypoint) && status.distanceToWaypoint >= 0
             ? `, dist ${status.distanceToWaypoint}`
             : "";
-        const pauseLabel = status?.pausedForCreatures
-          ? `, waiting (${status.nearbyCreatureCount || 0} creature${(status.nearbyCreatureCount || 0) === 1 ? "" : "s"})`
-          : status?.pausedForCombat
-            ? ", paused for combat"
-            : "";
+        const pauseLabel = status?.pausedForSpawn
+          ? `, waiting for spawn (${status.spawnFloorOffset > 0 ? `+${status.spawnFloorOffset}` : status.spawnFloorOffset})`
+          : status?.pausedForCreatures
+            ? `, waiting (${status.nearbyCreatureCount || 0} creature${(status.nearbyCreatureCount || 0) === 1 ? "" : "s"})`
+            : status?.pausedForCombat
+              ? ", paused for combat"
+              : "";
         statusLabel.textContent = `Status: running (${waypointNumber}/${route.length}${distanceLabel}${pauseLabel})`;
       } else {
         statusLabel.textContent = `Status: idle (${route.length} waypoint${route.length === 1 ? "" : "s"})`;
@@ -7927,12 +8044,20 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
                 <input type="checkbox" id="minibia-bot-cave-pause-until-clear" />
                 <span>Pause Until Clear</span>
               </label>
+              <div class="mb-row-three">
+                <label class="mb-toggle">
+                  <input type="checkbox" id="minibia-bot-cave-pause-until-spawn" />
+                  <span>Pause Until Monster on Floor</span>
+                </label>
+                <div class="mb-small-note">Floor offset</div>
+                <input type="number" id="minibia-bot-cave-spawn-floor-offset" placeholder="+1" />
+              </div>
               <div class="mb-actions mb-actions-inline-two">
                 <button type="button" class="mb-small-button" id="minibia-bot-cave-start">Start</button>
                 <button type="button" class="mb-small-button" id="minibia-bot-cave-stop">Stop</button>
               </div>
               <div class="mb-small-note" id="minibia-bot-cave-status">Status: no waypoints</div>
-              <div class="mb-small-note">When enabled, cave bot pauses only while Auto Attack target names (e.g. Rotworm) are visible on your floor. Other creatures are ignored.</div>
+              <div class="mb-small-note">Pause Until Clear waits while target monsters are on your floor. Pause Until Monster on Floor waits at a waypoint until a target monster spawns on the chosen floor offset (+1 is one floor above, -1 is one below) using the Auto Attack target list.</div>
             </div>
           </div>
           <div class="mb-section mb-column-section">
@@ -8028,6 +8153,8 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
     const caveStartButton = panel.querySelector("#minibia-bot-cave-start");
     const caveStopButton = panel.querySelector("#minibia-bot-cave-stop");
     const cavePauseUntilClearInput = panel.querySelector("#minibia-bot-cave-pause-until-clear");
+    const cavePauseUntilSpawnInput = panel.querySelector("#minibia-bot-cave-pause-until-spawn");
+    const caveSpawnFloorOffsetInput = panel.querySelector("#minibia-bot-cave-spawn-floor-offset");
     const cavePresetSelect = panel.querySelector("#minibia-bot-cave-preset-select");
     const cavePresetNewButton = panel.querySelector("#minibia-bot-cave-preset-new");
     const cavePresetDeleteButton = panel.querySelector("#minibia-bot-cave-preset-delete");
@@ -8291,6 +8418,30 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
       cavePauseUntilClearInput.checked = bot.cave?.config?.pauseUntilClear !== false;
       cavePauseUntilClearInput.addEventListener("change", () => {
         bot.cave.updateConfig({ pauseUntilClear: cavePauseUntilClearInput.checked });
+        refreshCaveStatus();
+      });
+    }
+
+    if (caveSpawnFloorOffsetInput) {
+      caveSpawnFloorOffsetInput.value = String(bot.cave?.config?.pauseUntilSpawnFloorOffset ?? 1);
+      caveSpawnFloorOffsetInput.addEventListener("change", () => {
+        const pauseUntilSpawnFloorOffset = Math.trunc(Number(caveSpawnFloorOffsetInput.value) || 0);
+        caveSpawnFloorOffsetInput.value = String(pauseUntilSpawnFloorOffset);
+        bot.cave.updateConfig({ pauseUntilSpawnFloorOffset });
+        refreshCaveStatus();
+      });
+    }
+
+    if (cavePauseUntilSpawnInput) {
+      cavePauseUntilSpawnInput.checked = !!bot.cave?.config?.pauseUntilSpawn;
+      cavePauseUntilSpawnInput.addEventListener("change", () => {
+        const pauseUntilSpawnFloorOffset = Math.trunc(
+          Number(caveSpawnFloorOffsetInput?.value) || bot.cave?.config?.pauseUntilSpawnFloorOffset || 0
+        );
+        bot.cave.updateConfig({
+          pauseUntilSpawn: cavePauseUntilSpawnInput.checked,
+          pauseUntilSpawnFloorOffset,
+        });
         refreshCaveStatus();
       });
     }

@@ -290,11 +290,13 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
           Number.isFinite(status?.distanceToWaypoint) && status.distanceToWaypoint >= 0
             ? `, dist ${status.distanceToWaypoint}`
             : "";
-        const pauseLabel = status?.pausedForCreatures
-          ? `, waiting (${status.nearbyCreatureCount || 0} creature${(status.nearbyCreatureCount || 0) === 1 ? "" : "s"})`
-          : status?.pausedForCombat
-            ? ", paused for combat"
-            : "";
+        const pauseLabel = status?.pausedForSpawn
+          ? `, waiting for spawn (${status.spawnFloorOffset > 0 ? `+${status.spawnFloorOffset}` : status.spawnFloorOffset})`
+          : status?.pausedForCreatures
+            ? `, waiting (${status.nearbyCreatureCount || 0} creature${(status.nearbyCreatureCount || 0) === 1 ? "" : "s"})`
+            : status?.pausedForCombat
+              ? ", paused for combat"
+              : "";
         statusLabel.textContent = `Status: running (${waypointNumber}/${route.length}${distanceLabel}${pauseLabel})`;
       } else {
         statusLabel.textContent = `Status: idle (${route.length} waypoint${route.length === 1 ? "" : "s"})`;
@@ -1116,12 +1118,20 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
                 <input type="checkbox" id="minibia-bot-cave-pause-until-clear" />
                 <span>Pause Until Clear</span>
               </label>
+              <div class="mb-row-three">
+                <label class="mb-toggle">
+                  <input type="checkbox" id="minibia-bot-cave-pause-until-spawn" />
+                  <span>Pause Until Monster on Floor</span>
+                </label>
+                <div class="mb-small-note">Floor offset</div>
+                <input type="number" id="minibia-bot-cave-spawn-floor-offset" placeholder="+1" />
+              </div>
               <div class="mb-actions mb-actions-inline-two">
                 <button type="button" class="mb-small-button" id="minibia-bot-cave-start">Start</button>
                 <button type="button" class="mb-small-button" id="minibia-bot-cave-stop">Stop</button>
               </div>
               <div class="mb-small-note" id="minibia-bot-cave-status">Status: no waypoints</div>
-              <div class="mb-small-note">When enabled, cave bot pauses only while Auto Attack target names (e.g. Rotworm) are visible on your floor. Other creatures are ignored.</div>
+              <div class="mb-small-note">Pause Until Clear waits while target monsters are on your floor. Pause Until Monster on Floor waits at a waypoint until a target monster spawns on the chosen floor offset (+1 is one floor above, -1 is one below) using the Auto Attack target list.</div>
             </div>
           </div>
           <div class="mb-section mb-column-section">
@@ -1217,6 +1227,8 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
     const caveStartButton = panel.querySelector("#minibia-bot-cave-start");
     const caveStopButton = panel.querySelector("#minibia-bot-cave-stop");
     const cavePauseUntilClearInput = panel.querySelector("#minibia-bot-cave-pause-until-clear");
+    const cavePauseUntilSpawnInput = panel.querySelector("#minibia-bot-cave-pause-until-spawn");
+    const caveSpawnFloorOffsetInput = panel.querySelector("#minibia-bot-cave-spawn-floor-offset");
     const cavePresetSelect = panel.querySelector("#minibia-bot-cave-preset-select");
     const cavePresetNewButton = panel.querySelector("#minibia-bot-cave-preset-new");
     const cavePresetDeleteButton = panel.querySelector("#minibia-bot-cave-preset-delete");
@@ -1480,6 +1492,30 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
       cavePauseUntilClearInput.checked = bot.cave?.config?.pauseUntilClear !== false;
       cavePauseUntilClearInput.addEventListener("change", () => {
         bot.cave.updateConfig({ pauseUntilClear: cavePauseUntilClearInput.checked });
+        refreshCaveStatus();
+      });
+    }
+
+    if (caveSpawnFloorOffsetInput) {
+      caveSpawnFloorOffsetInput.value = String(bot.cave?.config?.pauseUntilSpawnFloorOffset ?? 1);
+      caveSpawnFloorOffsetInput.addEventListener("change", () => {
+        const pauseUntilSpawnFloorOffset = Math.trunc(Number(caveSpawnFloorOffsetInput.value) || 0);
+        caveSpawnFloorOffsetInput.value = String(pauseUntilSpawnFloorOffset);
+        bot.cave.updateConfig({ pauseUntilSpawnFloorOffset });
+        refreshCaveStatus();
+      });
+    }
+
+    if (cavePauseUntilSpawnInput) {
+      cavePauseUntilSpawnInput.checked = !!bot.cave?.config?.pauseUntilSpawn;
+      cavePauseUntilSpawnInput.addEventListener("change", () => {
+        const pauseUntilSpawnFloorOffset = Math.trunc(
+          Number(caveSpawnFloorOffsetInput?.value) || bot.cave?.config?.pauseUntilSpawnFloorOffset || 0
+        );
+        bot.cave.updateConfig({
+          pauseUntilSpawn: cavePauseUntilSpawnInput.checked,
+          pauseUntilSpawnFloorOffset,
+        });
         refreshCaveStatus();
       });
     }
