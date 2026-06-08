@@ -4326,8 +4326,21 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
     return getSpawnFloorMonsters(position).length > 0;
   }
 
+  function getSpawnWaitWaypointIndex() {
+    const index = route.findIndex((entry) => !isDelayWaypoint(entry));
+    return index >= 0 ? index : 0;
+  }
+
+  function isSpawnWaitWaypoint(waypoint, index = state.currentIndex) {
+    return index === getSpawnWaitWaypointIndex() && !!waypoint && !isDelayWaypoint(waypoint);
+  }
+
   function shouldPauseForSpawn(position, waypoint) {
     if (!config.pauseUntilSpawn || !getAttackTargetNames().length) {
+      return false;
+    }
+
+    if (!isSpawnWaitWaypoint(waypoint)) {
       return false;
     }
 
@@ -4335,11 +4348,7 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
       return false;
     }
 
-    if (state.pausedForSpawn) {
-      return true;
-    }
-
-    return isAtWaypoint(position, waypoint) && !isDelayWaypoint(waypoint);
+    return isAtWaypoint(position, waypoint);
   }
 
   function resetDelayState() {
@@ -5387,12 +5396,14 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
 
       if (state.pausedForSpawn) {
         state.pausedForSpawn = false;
-        const spawned = getSpawnFloorMonsters(position);
-        bot.log("cave resumed after target monster spawned", {
-          floorOffset: normalizeSpawnFloorOffset(config.pauseUntilSpawnFloorOffset),
-          watchFloor: getSpawnWatchFloor(position),
-          creatures: spawned.map((creature) => creature.name || "Mob"),
-        });
+        if (hasSpawnFloorMonster(position)) {
+          const spawned = getSpawnFloorMonsters(position);
+          bot.log("cave resumed after target monster spawned", {
+            floorOffset: normalizeSpawnFloorOffset(config.pauseUntilSpawnFloorOffset),
+            watchFloor: getSpawnWatchFloor(position),
+            creatures: spawned.map((creature) => creature.name || "Mob"),
+          });
+        }
       }
 
       if (positionKey && positionKey !== state.lastPositionKey) {
@@ -8057,7 +8068,7 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
                 <button type="button" class="mb-small-button" id="minibia-bot-cave-stop">Stop</button>
               </div>
               <div class="mb-small-note" id="minibia-bot-cave-status">Status: no waypoints</div>
-              <div class="mb-small-note">Pause Until Clear waits while target monsters are on your floor. Pause Until Monster on Floor waits at a waypoint until a target monster spawns on the chosen floor offset (+1 is one floor above, -1 is one below) using the Auto Attack target list.</div>
+              <div class="mb-small-note">Pause Until Clear waits while target monsters are on your floor. Pause Until Monster on Floor only waits at the first waypoint until a target monster spawns on the chosen floor offset (+1 is one floor above, -1 is one below), then continues the route and returns to that first waypoint to wait again.</div>
             </div>
           </div>
           <div class="mb-section mb-column-section">

@@ -570,8 +570,21 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
     return getSpawnFloorMonsters(position).length > 0;
   }
 
+  function getSpawnWaitWaypointIndex() {
+    const index = route.findIndex((entry) => !isDelayWaypoint(entry));
+    return index >= 0 ? index : 0;
+  }
+
+  function isSpawnWaitWaypoint(waypoint, index = state.currentIndex) {
+    return index === getSpawnWaitWaypointIndex() && !!waypoint && !isDelayWaypoint(waypoint);
+  }
+
   function shouldPauseForSpawn(position, waypoint) {
     if (!config.pauseUntilSpawn || !getAttackTargetNames().length) {
+      return false;
+    }
+
+    if (!isSpawnWaitWaypoint(waypoint)) {
       return false;
     }
 
@@ -579,11 +592,7 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
       return false;
     }
 
-    if (state.pausedForSpawn) {
-      return true;
-    }
-
-    return isAtWaypoint(position, waypoint) && !isDelayWaypoint(waypoint);
+    return isAtWaypoint(position, waypoint);
   }
 
   function resetDelayState() {
@@ -1631,12 +1640,14 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
 
       if (state.pausedForSpawn) {
         state.pausedForSpawn = false;
-        const spawned = getSpawnFloorMonsters(position);
-        bot.log("cave resumed after target monster spawned", {
-          floorOffset: normalizeSpawnFloorOffset(config.pauseUntilSpawnFloorOffset),
-          watchFloor: getSpawnWatchFloor(position),
-          creatures: spawned.map((creature) => creature.name || "Mob"),
-        });
+        if (hasSpawnFloorMonster(position)) {
+          const spawned = getSpawnFloorMonsters(position);
+          bot.log("cave resumed after target monster spawned", {
+            floorOffset: normalizeSpawnFloorOffset(config.pauseUntilSpawnFloorOffset),
+            watchFloor: getSpawnWatchFloor(position),
+            creatures: spawned.map((creature) => creature.name || "Mob"),
+          });
+        }
       }
 
       if (positionKey && positionKey !== state.lastPositionKey) {

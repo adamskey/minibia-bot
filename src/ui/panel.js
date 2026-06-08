@@ -1131,7 +1131,7 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
                 <button type="button" class="mb-small-button" id="minibia-bot-cave-stop">Stop</button>
               </div>
               <div class="mb-small-note" id="minibia-bot-cave-status">Status: no waypoints</div>
-              <div class="mb-small-note">Pause Until Clear waits while target monsters are on your floor. Pause Until Monster on Floor waits at a waypoint until a target monster spawns on the chosen floor offset (+1 is one floor above, -1 is one below) using the Auto Attack target list.</div>
+              <div class="mb-small-note">Pause Until Clear waits while target monsters are on your floor. Pause Until Monster on Floor only waits at the first waypoint until a target monster spawns on the chosen floor offset (+1 is one floor above, -1 is one below), then continues the route and returns to that first waypoint to wait again.</div>
             </div>
           </div>
           <div class="mb-section mb-column-section">
