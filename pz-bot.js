@@ -2844,7 +2844,7 @@ window.__minibiaBotBundle.installAutoAttackModule = function installAutoAttackMo
       runeHotbarSlot: null,
       targetCooldownMs: 1200,
       runeCooldownMs: 1200,
-      maxTargetDistance: 8,
+      maxTargetDistance: 6,
       meleeMode: true,
       targetNames: [],
       skillTrainOnMonster: false,
@@ -2911,9 +2911,26 @@ window.__minibiaBotBundle.installAutoAttackModule = function installAutoAttackMo
     return normalized;
   }
 
+  function getMaxTargetDistance() {
+    return Math.max(1, Number(config.maxTargetDistance) || 6);
+  }
+
+  function isWithinTargetDistance(creature, playerPosition = normalizePosition(bot.getPlayerPosition())) {
+    if (!playerPosition) {
+      return true;
+    }
+
+    const creaturePosition = normalizePosition(
+      creature?.getPosition?.() || creature?.__position || creature?.position
+    );
+    return getTileDistance(playerPosition, creaturePosition) <= getMaxTargetDistance();
+  }
+
   function getNearbyMonsters() {
+    const playerPosition = normalizePosition(bot.getPlayerPosition());
     return (bot.xray?.getVisibleMonsters?.({ sameFloorOnly: true }) || [])
-      .filter((creature) => isAllowedTarget(creature));
+      .filter((creature) => isAllowedTarget(creature))
+      .filter((creature) => isWithinTargetDistance(creature, playerPosition));
   }
 
   function normalizePosition(value) {
@@ -3310,8 +3327,7 @@ window.__minibiaBotBundle.installAutoAttackModule = function installAutoAttackMo
       return !isReachableSkillTrainTarget(target, playerPosition);
     }
 
-    const maxTargetDistance = Math.max(1, Number(config.maxTargetDistance) || 8);
-    return getTileDistance(playerPosition, targetPosition) > maxTargetDistance;
+    return getTileDistance(playerPosition, targetPosition) > getMaxTargetDistance();
   }
 
   function resetTargetIfTooFar() {
@@ -3322,7 +3338,7 @@ window.__minibiaBotBundle.installAutoAttackModule = function installAutoAttackMo
         id: currentTarget.id,
         name: currentTarget.name || "Mob",
         position: normalizePosition(currentTarget.getPosition?.() || currentTarget.__position),
-        maxTargetDistance: Math.max(1, Number(config.maxTargetDistance) || 8),
+        maxTargetDistance: getMaxTargetDistance(),
       });
       return true;
     }
@@ -3334,7 +3350,7 @@ window.__minibiaBotBundle.installAutoAttackModule = function installAutoAttackMo
         id: engagedTarget.id,
         name: engagedTarget.name || "Mob",
         position: normalizePosition(engagedTarget.getPosition?.() || engagedTarget.__position),
-        maxTargetDistance: Math.max(1, Number(config.maxTargetDistance) || 8),
+        maxTargetDistance: getMaxTargetDistance(),
       });
       return true;
     }
@@ -3706,7 +3722,10 @@ window.__minibiaBotBundle.installAutoAttackModule = function installAutoAttackMo
     }
 
     if (Object.prototype.hasOwnProperty.call(nextConfig, "maxTargetDistance")) {
-      nextConfig.maxTargetDistance = Math.max(1, Math.trunc(Number(nextConfig.maxTargetDistance) || config.maxTargetDistance || 8));
+      nextConfig.maxTargetDistance = Math.min(
+        15,
+        Math.max(1, Math.trunc(Number(nextConfig.maxTargetDistance) || config.maxTargetDistance || 6))
+      );
     }
 
     if (Object.prototype.hasOwnProperty.call(nextConfig, "targetNames")) {
@@ -7177,6 +7196,60 @@ window.__minibiaBotBundle = window.__minibiaBotBundle || {};
 window.__minibiaBotBundle.installPanel = function installPanel(bot) {
   const panelPositionKey = "minibiaBot.ui.panelPosition";
   const panelCollapsedKey = "minibiaBot.ui.panelCollapsed";
+  const expandedModulesKey = "minibiaBot.ui.expandedModules";
+
+  function getExpandedModules() {
+    return bot.storage.get(expandedModulesKey, {}) || {};
+  }
+
+  function saveExpandedModule(moduleId, expanded) {
+    const next = { ...getExpandedModules(), [moduleId]: !!expanded };
+    bot.storage.set(expandedModulesKey, next);
+  }
+
+  function initAccordions(panel) {
+    const expanded = getExpandedModules();
+
+    panel.querySelectorAll(".mb-accordion").forEach((accordion) => {
+      const moduleId = accordion.dataset.module;
+      if (!moduleId) {
+        return;
+      }
+
+      const toggle = accordion.querySelector(".mb-accordion-toggle");
+      const body = accordion.querySelector(".mb-accordion-body");
+
+      const setExpanded = (nextExpanded) => {
+        accordion.dataset.expanded = nextExpanded ? "true" : "false";
+        if (body) {
+          body.hidden = !nextExpanded;
+        }
+
+        if (toggle) {
+          toggle.textContent = nextExpanded ? "−" : "+";
+          toggle.setAttribute("aria-label", nextExpanded ? "Collapse section" : "Expand section");
+        }
+
+        saveExpandedModule(moduleId, nextExpanded);
+      };
+
+      setExpanded(expanded[moduleId] === true);
+
+      const onHeaderClick = (event) => {
+        if (event.target.closest("button, input, select, textarea, a, label")) {
+          return;
+        }
+
+        setExpanded(accordion.dataset.expanded !== "true");
+      };
+
+      accordion.querySelector(".mb-accordion-header")?.addEventListener("click", onHeaderClick);
+      toggle?.addEventListener("click", (event) => {
+        event.stopPropagation();
+        setExpanded(accordion.dataset.expanded !== "true");
+      });
+    });
+  }
 
   function destroy() {
     document.getElementById("minibia-bot-panel")?.remove();
@@ -7820,11 +7893,11 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
       #minibia-bot-panel {
         top: 16px;
         right: 16px;
-        width: 960px;
+        width: min(420px, calc(100vw - 32px));
       }
 
       #minibia-bot-panel[data-collapsed="true"] {
-        width: 220px;
+        width: 200px;
       }
 
       #minibia-bot-panel .mb-title {
@@ -7857,29 +7930,62 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
       }
 
       #minibia-bot-panel .mb-body {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) 280px 240px;
-        gap: 12px;
-        align-items: start;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        max-height: min(72vh, 680px);
+        overflow-y: auto;
+        padding-right: 2px;
       }
 
       #minibia-bot-panel .mb-body[hidden] {
         display: none !important;
       }
 
-      #minibia-bot-panel .mb-side-column,
-      #minibia-bot-panel .mb-main-column,
-      #minibia-bot-panel .mb-cave-column {
-        display: grid;
-        gap: 10px;
+      #minibia-bot-panel .mb-accordion {
+        border: 1px solid rgba(224, 200, 148, 0.16);
+        border-radius: 8px;
+        overflow: hidden;
+        background: rgba(0, 0, 0, 0.12);
+      }
+
+      #minibia-bot-panel .mb-accordion-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 8px 10px;
+        cursor: pointer;
+        background: rgba(224, 200, 148, 0.06);
+      }
+
+      #minibia-bot-panel .mb-accordion-title {
+        font-weight: 700;
+        color: #d3c49d;
+        text-transform: uppercase;
+        font-size: 11px;
+        letter-spacing: 0.04em;
+      }
+
+      #minibia-bot-panel .mb-accordion-toggle {
+        width: 22px;
+        min-width: 22px;
+        padding: 0;
+        border-radius: 6px;
+        font-weight: 700;
+        line-height: 1;
+      }
+
+      #minibia-bot-panel .mb-accordion-body {
+        padding: 10px;
+        border-top: 1px solid rgba(224, 200, 148, 0.1);
+      }
+
+      #minibia-bot-panel .mb-accordion-body[hidden] {
+        display: none !important;
       }
 
       #minibia-bot-panel .mb-section {
-        padding-top: 10px;
-        border-top: 1px solid rgba(224, 200, 148, 0.16);
-      }
-
-      #minibia-bot-panel .mb-column-section:first-child {
         padding-top: 0;
         border-top: 0;
       }
@@ -8087,14 +8193,6 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
       }
 
       @media (max-width: 760px) {
-        #minibia-bot-panel {
-          width: min(720px, calc(100vw - 32px));
-        }
-
-        #minibia-bot-panel .mb-body {
-          grid-template-columns: 1fr;
-        }
-
         #minibia-bot-panel .mb-field-grid {
           grid-template-columns: 1fr;
         }
@@ -8110,11 +8208,15 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
         <button type="button" class="mb-icon-button" id="minibia-bot-collapse" aria-label="Minimize panel" title="Minimize">−</button>
       </div>
       <div class="mb-body">
-        <div class="mb-main-column">
-          <div class="mb-actions mb-column-section">
-            <button type="button" id="minibia-bot-reload">Reload Bot</button>
+        <div class="mb-actions">
+          <button type="button" id="minibia-bot-reload">Reload Bot</button>
+        </div>
+        <div class="mb-accordion" data-module="panic">
+          <div class="mb-accordion-header">
+            <span class="mb-accordion-title">Panic Runner</span>
+            <button type="button" class="mb-accordion-toggle mb-icon-button" aria-label="Expand section">+</button>
           </div>
-          <div class="mb-section mb-column-section">
+          <div class="mb-accordion-body" hidden>
             <div class="mb-label" id="minibia-bot-home">Panic Runner Home: not set</div>
             <div class="mb-stack">
               <button type="button" id="minibia-bot-set-home">Set Home</button>
@@ -8137,8 +8239,13 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
               <div class="mb-list" id="minibia-bot-panic-trusted-list"></div>
             </div>
           </div>
-          <div class="mb-section mb-column-section">
-            <div class="mb-label">GM Kill Switch</div>
+        </div>
+        <div class="mb-accordion" data-module="gm">
+          <div class="mb-accordion-header">
+            <span class="mb-accordion-title">GM Kill Switch</span>
+            <button type="button" class="mb-accordion-toggle mb-icon-button" aria-label="Expand section">+</button>
+          </div>
+          <div class="mb-accordion-body" hidden>
             <div class="mb-stack">
               <div class="mb-inline">
                 <input type="text" id="minibia-bot-panic-gm-input" placeholder="Game master name" />
@@ -8147,7 +8254,13 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
               <div class="mb-list" id="minibia-bot-panic-gm-list"></div>
             </div>
           </div>
-          <div class="mb-section mb-column-section">
+        </div>
+        <div class="mb-accordion" data-module="utilities">
+          <div class="mb-accordion-header">
+            <span class="mb-accordion-title">Utilities</span>
+            <button type="button" class="mb-accordion-toggle mb-icon-button" aria-label="Expand section">+</button>
+          </div>
+          <div class="mb-accordion-body" hidden>
             <div class="mb-actions">
               <div class="mb-row-three">
                 <label class="mb-toggle">
@@ -8201,13 +8314,13 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
               </div>
             </div>
           </div>
-          <div class="mb-section mb-column-section">
-            <div class="mb-note">Loaded routines: Panic Runner, magic level trainer, auto eat, auto invisible, auto utamo vita, equip ring, auto heal, auto attack, and talk.</div>
-          </div>
         </div>
-        <div class="mb-side-column">
-          <div class="mb-section mb-column-section">
-            <div class="mb-label">Xray</div>
+        <div class="mb-accordion" data-module="xray">
+          <div class="mb-accordion-header">
+            <span class="mb-accordion-title">Xray</span>
+            <button type="button" class="mb-accordion-toggle mb-icon-button" aria-label="Expand section">+</button>
+          </div>
+          <div class="mb-accordion-body" hidden>
             <button type="button" class="mb-small-button" id="minibia-bot-xray-overlay-toggle">Disable Overlay</button>
             <div class="mb-small-note" id="minibia-bot-xray-overlay-status">Overlay: on</div>
             <label class="mb-field" for="minibia-bot-xray-floor-select">
@@ -8218,8 +8331,13 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
             </label>
             <div class="mb-list" id="minibia-bot-visible-creatures-list"></div>
           </div>
-          <div class="mb-section mb-column-section">
-            <div class="mb-label">Auto Heal</div>
+        </div>
+        <div class="mb-accordion" data-module="heal">
+          <div class="mb-accordion-header">
+            <span class="mb-accordion-title">Auto Heal</span>
+            <button type="button" class="mb-accordion-toggle mb-icon-button" aria-label="Expand section">+</button>
+          </div>
+          <div class="mb-accordion-body" hidden>
             <div class="mb-stack">
               <label class="mb-toggle">
                 <input type="checkbox" id="minibia-bot-auto-heal-enabled" />
@@ -8246,24 +8364,55 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
               <div class="mb-small-note">Checks about twenty times per second. HP is used before mana, and unregistered hotkey presses are retried quickly.</div>
             </div>
           </div>
-          <div class="mb-section mb-column-section">
-            <div class="mb-label">Talk</div>
+        </div>
+        <div class="mb-accordion" data-module="attack">
+          <div class="mb-accordion-header">
+            <span class="mb-accordion-title">Auto Attack</span>
+            <button type="button" class="mb-accordion-toggle mb-icon-button" aria-label="Expand section">+</button>
+          </div>
+          <div class="mb-accordion-body" hidden>
             <div class="mb-stack">
               <label class="mb-toggle">
-                <input type="checkbox" id="minibia-bot-talk-enabled" />
-                <span>Enable Auto Reply</span>
+                <input type="checkbox" id="minibia-bot-auto-attack-enabled" />
+                <span>Enable Auto Attack</span>
               </label>
-              <input type="password" id="minibia-bot-talk-api-key" placeholder="Gemini API key" />
-              <textarea id="minibia-bot-talk-prompt" placeholder="Reply style prompt"></textarea>
-              <div class="mb-small-note" id="minibia-bot-talk-status">Status: idle</div>
-              <div class="mb-small-note">Replies only to the newest unseen message in Default chat.</div>
-              <div class="mb-small-note">It will not reply to itself and will not admit it is a bot.</div>
+              <label class="mb-toggle">
+                <input type="checkbox" id="minibia-bot-auto-attack-melee" />
+                <span>Melee Mode</span>
+              </label>
+              <label class="mb-toggle">
+                <input type="checkbox" id="minibia-bot-auto-attack-skill-train" />
+                <span>Skill Train on Monster</span>
+              </label>
+              <div class="mb-field-grid">
+                <label class="mb-field" for="minibia-bot-auto-attack-max-distance">
+                  <span class="mb-field-label">Target Range (sqm)</span>
+                  <input type="number" id="minibia-bot-auto-attack-max-distance" min="1" max="15" placeholder="6" />
+                </label>
+                <label class="mb-field" for="minibia-bot-auto-attack-hotkey">
+                  <span class="mb-field-label">Target Hotkey (1-12)</span>
+                  <input type="number" id="minibia-bot-auto-attack-hotkey" min="1" max="12" placeholder="3" />
+                </label>
+                <label class="mb-field" for="minibia-bot-auto-attack-rune-hotkey">
+                  <span class="mb-field-label">Rune Hotkey (1-12)</span>
+                  <input type="number" id="minibia-bot-auto-attack-rune-hotkey" min="1" max="12" placeholder="4" />
+                </label>
+              </div>
+              <div class="mb-inline">
+                <input type="text" id="minibia-bot-auto-attack-target-input" placeholder="Target name (e.g. Rotworm)" />
+                <button type="button" class="mb-small-button" id="minibia-bot-auto-attack-target-add">Add</button>
+              </div>
+              <div class="mb-list" id="minibia-bot-auto-attack-target-list"></div>
+              <div class="mb-small-note">Only targets monsters within the range above (tile distance on the same floor). Melee mode uses the target hotkey, then walks adjacent to the target. Non-melee uses the target hotkey and rune hotkey. Add target names to attack only those creatures. Skill Train only considers adjacent monsters (1 sqm), highest HP first.</div>
             </div>
           </div>
         </div>
-        <div class="mb-cave-column">
-          <div class="mb-section mb-column-section">
-            <div class="mb-label">Cave Bot</div>
+        <div class="mb-accordion" data-module="cave">
+          <div class="mb-accordion-header">
+            <span class="mb-accordion-title">Cave Bot</span>
+            <button type="button" class="mb-accordion-toggle mb-icon-button" aria-label="Expand section">+</button>
+          </div>
+          <div class="mb-accordion-body" hidden>
             <div class="mb-stack">
               <div class="mb-field-grid">
                 <label class="mb-field" for="minibia-bot-cave-preset-select">
@@ -8308,35 +8457,23 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
               <div class="mb-small-note">Pause Until Clear waits while target monsters are on your floor. Pause Until Monster on Floor only waits at the first waypoint until a target monster spawns on the chosen floor offset (+1 is one floor above, -1 is one below), then continues the route and returns to that first waypoint to wait again.</div>
             </div>
           </div>
-          <div class="mb-section mb-column-section">
-            <div class="mb-label">Auto Attack</div>
+        </div>
+        <div class="mb-accordion" data-module="talk">
+          <div class="mb-accordion-header">
+            <span class="mb-accordion-title">Talk</span>
+            <button type="button" class="mb-accordion-toggle mb-icon-button" aria-label="Expand section">+</button>
+          </div>
+          <div class="mb-accordion-body" hidden>
             <div class="mb-stack">
               <label class="mb-toggle">
-                <input type="checkbox" id="minibia-bot-auto-attack-enabled" />
-                <span>Enable Auto Attack</span>
+                <input type="checkbox" id="minibia-bot-talk-enabled" />
+                <span>Enable Auto Reply</span>
               </label>
-              <label class="mb-toggle">
-                <input type="checkbox" id="minibia-bot-auto-attack-melee" />
-                <span>Melee Mode</span>
-              </label>
-              <label class="mb-toggle">
-                <input type="checkbox" id="minibia-bot-auto-attack-skill-train" />
-                <span>Skill Train on Monster</span>
-              </label>
-              <label class="mb-field" for="minibia-bot-auto-attack-hotkey">
-                <span class="mb-field-label">Target Hotkey (1-12)</span>
-                <input type="number" id="minibia-bot-auto-attack-hotkey" min="1" max="12" placeholder="3" />
-              </label>
-              <label class="mb-field" for="minibia-bot-auto-attack-rune-hotkey">
-                <span class="mb-field-label">Rune Hotkey (1-12)</span>
-                <input type="number" id="minibia-bot-auto-attack-rune-hotkey" min="1" max="12" placeholder="4" />
-              </label>
-              <div class="mb-inline">
-                <input type="text" id="minibia-bot-auto-attack-target-input" placeholder="Target name (e.g. Rotworm)" />
-                <button type="button" class="mb-small-button" id="minibia-bot-auto-attack-target-add">Add</button>
-              </div>
-              <div class="mb-list" id="minibia-bot-auto-attack-target-list"></div>
-              <div class="mb-small-note">Melee mode uses the target hotkey, then walks adjacent to the target. Non-melee mode uses the target hotkey to acquire a target and the rune hotkey to cast on that target. Leave target names empty to attack any monster; add names to attack only those creatures (skips NPCs and other mobs). Skill Train only considers monsters on tiles next to you (within 1 square), picks the highest HP among them, and switches when another nearby target has more HP (checked about every 1.5s).</div>
+              <input type="password" id="minibia-bot-talk-api-key" placeholder="Gemini API key" />
+              <textarea id="minibia-bot-talk-prompt" placeholder="Reply style prompt"></textarea>
+              <div class="mb-small-note" id="minibia-bot-talk-status">Status: idle</div>
+              <div class="mb-small-note">Replies only to the newest unseen message in Default chat.</div>
+              <div class="mb-small-note">It will not reply to itself and will not admit it is a bot.</div>
             </div>
           </div>
         </div>
@@ -8359,6 +8496,7 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
     applySavedPanelPosition(panel);
     enableDrag(panel);
     setPanelCollapsed(panel, getSavedPanelCollapsed());
+    initAccordions(panel);
 
     const spellInput = panel.querySelector("#minibia-bot-rune-spell");
     const manaMinInput = panel.querySelector("#minibia-bot-rune-mana-min");
@@ -8377,6 +8515,7 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
     const autoAttackEnabledInput = panel.querySelector("#minibia-bot-auto-attack-enabled");
     const autoAttackMeleeInput = panel.querySelector("#minibia-bot-auto-attack-melee");
     const autoAttackSkillTrainInput = panel.querySelector("#minibia-bot-auto-attack-skill-train");
+    const autoAttackMaxDistanceInput = panel.querySelector("#minibia-bot-auto-attack-max-distance");
     const autoAttackHotkeyInput = panel.querySelector("#minibia-bot-auto-attack-hotkey");
     const autoAttackRuneHotkeyInput = panel.querySelector("#minibia-bot-auto-attack-rune-hotkey");
     const autoAttackTargetInput = panel.querySelector("#minibia-bot-auto-attack-target-input");
@@ -8878,6 +9017,18 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
       });
     }
 
+    if (autoAttackMaxDistanceInput) {
+      autoAttackMaxDistanceInput.value = String(bot.attack?.config?.maxTargetDistance ?? 6);
+      autoAttackMaxDistanceInput.addEventListener("change", () => {
+        const maxTargetDistance = Math.min(
+          15,
+          Math.max(1, Math.trunc(Number(autoAttackMaxDistanceInput.value) || bot.attack.config.maxTargetDistance || 6))
+        );
+        autoAttackMaxDistanceInput.value = String(maxTargetDistance);
+        bot.attack.updateConfig({ maxTargetDistance });
+      });
+    }
+
     if (autoAttackHotkeyInput) {
       autoAttackHotkeyInput.value = String(bot.attack?.config?.targetHotbarSlot ?? 3);
       autoAttackHotkeyInput.addEventListener("change", () => {
@@ -8967,9 +9118,20 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
         })();
         const meleeMode = !!autoAttackMeleeInput?.checked;
         const skillTrainOnMonster = !!autoAttackSkillTrainInput?.checked;
+        const maxTargetDistance = Math.min(
+          15,
+          Math.max(
+            1,
+            Math.trunc(Number(autoAttackMaxDistanceInput?.value) || bot.attack.config.maxTargetDistance || 6)
+          )
+        );
+
+        if (autoAttackMaxDistanceInput) {
+          autoAttackMaxDistanceInput.value = String(maxTargetDistance);
+        }
 
         if (autoAttackEnabledInput.checked) {
-          bot.attack.start({ targetHotbarSlot, runeHotbarSlot, meleeMode, skillTrainOnMonster });
+          bot.attack.start({ targetHotbarSlot, runeHotbarSlot, meleeMode, skillTrainOnMonster, maxTargetDistance });
         } else {
           bot.attack.stop();
         }

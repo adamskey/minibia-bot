@@ -27,7 +27,7 @@ window.__minibiaBotBundle.installAutoAttackModule = function installAutoAttackMo
       runeHotbarSlot: null,
       targetCooldownMs: 1200,
       runeCooldownMs: 1200,
-      maxTargetDistance: 8,
+      maxTargetDistance: 6,
       meleeMode: true,
       targetNames: [],
       skillTrainOnMonster: false,
@@ -94,9 +94,26 @@ window.__minibiaBotBundle.installAutoAttackModule = function installAutoAttackMo
     return normalized;
   }
 
+  function getMaxTargetDistance() {
+    return Math.max(1, Number(config.maxTargetDistance) || 6);
+  }
+
+  function isWithinTargetDistance(creature, playerPosition = normalizePosition(bot.getPlayerPosition())) {
+    if (!playerPosition) {
+      return true;
+    }
+
+    const creaturePosition = normalizePosition(
+      creature?.getPosition?.() || creature?.__position || creature?.position
+    );
+    return getTileDistance(playerPosition, creaturePosition) <= getMaxTargetDistance();
+  }
+
   function getNearbyMonsters() {
+    const playerPosition = normalizePosition(bot.getPlayerPosition());
     return (bot.xray?.getVisibleMonsters?.({ sameFloorOnly: true }) || [])
-      .filter((creature) => isAllowedTarget(creature));
+      .filter((creature) => isAllowedTarget(creature))
+      .filter((creature) => isWithinTargetDistance(creature, playerPosition));
   }
 
   function normalizePosition(value) {
@@ -493,8 +510,7 @@ window.__minibiaBotBundle.installAutoAttackModule = function installAutoAttackMo
       return !isReachableSkillTrainTarget(target, playerPosition);
     }
 
-    const maxTargetDistance = Math.max(1, Number(config.maxTargetDistance) || 8);
-    return getTileDistance(playerPosition, targetPosition) > maxTargetDistance;
+    return getTileDistance(playerPosition, targetPosition) > getMaxTargetDistance();
   }
 
   function resetTargetIfTooFar() {
@@ -505,7 +521,7 @@ window.__minibiaBotBundle.installAutoAttackModule = function installAutoAttackMo
         id: currentTarget.id,
         name: currentTarget.name || "Mob",
         position: normalizePosition(currentTarget.getPosition?.() || currentTarget.__position),
-        maxTargetDistance: Math.max(1, Number(config.maxTargetDistance) || 8),
+        maxTargetDistance: getMaxTargetDistance(),
       });
       return true;
     }
@@ -517,7 +533,7 @@ window.__minibiaBotBundle.installAutoAttackModule = function installAutoAttackMo
         id: engagedTarget.id,
         name: engagedTarget.name || "Mob",
         position: normalizePosition(engagedTarget.getPosition?.() || engagedTarget.__position),
-        maxTargetDistance: Math.max(1, Number(config.maxTargetDistance) || 8),
+        maxTargetDistance: getMaxTargetDistance(),
       });
       return true;
     }
@@ -889,7 +905,10 @@ window.__minibiaBotBundle.installAutoAttackModule = function installAutoAttackMo
     }
 
     if (Object.prototype.hasOwnProperty.call(nextConfig, "maxTargetDistance")) {
-      nextConfig.maxTargetDistance = Math.max(1, Math.trunc(Number(nextConfig.maxTargetDistance) || config.maxTargetDistance || 8));
+      nextConfig.maxTargetDistance = Math.min(
+        15,
+        Math.max(1, Math.trunc(Number(nextConfig.maxTargetDistance) || config.maxTargetDistance || 6))
+      );
     }
 
     if (Object.prototype.hasOwnProperty.call(nextConfig, "targetNames")) {
