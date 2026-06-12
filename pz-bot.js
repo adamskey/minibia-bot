@@ -3800,6 +3800,7 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
       tickMs: 500,
       repathMs: 1500,
       waypointTolerance: 2,
+      waypointLookahead: 12,
       pauseUntilClear: true,
       pauseUntilSpawn: false,
       pauseUntilSpawnFloorOffset: 1,
@@ -4405,11 +4406,21 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
       Number(a.z) === Number(b.z);
   }
 
+  function getWaypointLookahead() {
+    const value = Number(config.waypointLookahead);
+    if (!Number.isFinite(value) || value < 1) {
+      return 12;
+    }
+
+    return Math.trunc(value);
+  }
+
   function findClosestWaypointIndex(position) {
     if (!position || !route.length) {
       return 0;
     }
 
+    const tolerance = getWaypointTolerance();
     let bestIndex = 0;
     let bestDistance = Number.POSITIVE_INFINITY;
 
@@ -4426,6 +4437,12 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
       if (distance < bestDistance) {
         bestDistance = distance;
         bestIndex = index;
+        return;
+      }
+
+      if (distance <= bestDistance + tolerance && index < bestIndex) {
+        bestIndex = index;
+        bestDistance = distance;
       }
     });
 
@@ -4435,6 +4452,52 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
 
     const firstPositionIndex = route.findIndex((waypoint) => !isDelayWaypoint(waypoint));
     return firstPositionIndex >= 0 ? firstPositionIndex : 0;
+  }
+
+  function findAheadWaypointIndex(position, fromIndex, direction) {
+    const startIndex = Math.max(0, Math.min(route.length - 1, Math.trunc(Number(fromIndex) || 0)));
+    const lookahead = getWaypointLookahead();
+    let bestIndex = startIndex;
+    let bestDistance = getDistanceToWaypoint(position, route[startIndex]);
+
+    if (direction > 0) {
+      const limit = Math.min(route.length - 1, startIndex + lookahead);
+      for (let index = startIndex + 1; index <= limit; index += 1) {
+        if (isDelayWaypoint(route[index])) {
+          continue;
+        }
+
+        const distance = getDistanceToWaypoint(position, route[index]);
+        if (!Number.isFinite(distance)) {
+          continue;
+        }
+
+        if (!Number.isFinite(bestDistance) || distance < bestDistance) {
+          bestDistance = distance;
+          bestIndex = index;
+        }
+      }
+      return bestIndex;
+    }
+
+    const limit = Math.max(0, startIndex - lookahead);
+    for (let index = startIndex - 1; index >= limit; index -= 1) {
+      if (isDelayWaypoint(route[index])) {
+        continue;
+      }
+
+      const distance = getDistanceToWaypoint(position, route[index]);
+      if (!Number.isFinite(distance)) {
+        continue;
+      }
+
+      if (!Number.isFinite(bestDistance) || distance < bestDistance) {
+        bestDistance = distance;
+        bestIndex = index;
+      }
+    }
+
+    return bestIndex;
   }
 
   function getTileAt(position) {
@@ -4998,7 +5061,7 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
 
     const currentWaypoint = getCurrentWaypoint();
     const currentDistance = getDistanceToWaypoint(position, currentWaypoint);
-    const closestIndex = findClosestWaypointIndex(position);
+    const aheadIndex = findAheadWaypointIndex(position, state.currentIndex, direction);
 
     if (!Number.isFinite(currentDistance)) {
       if (previousIndex !== state.currentIndex) {
@@ -5015,23 +5078,23 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
       return false;
     }
 
-    if (direction > 0 && closestIndex > state.currentIndex) {
-      const closestWaypoint = route[closestIndex];
-      const closestDistance = getDistanceToWaypoint(position, closestWaypoint);
-      if (Number.isFinite(closestDistance) && closestDistance < currentDistance) {
-        let nextIndex = findNextPositionIndex(closestIndex, 1);
+    if (direction > 0 && aheadIndex > state.currentIndex) {
+      const aheadWaypoint = route[aheadIndex];
+      const aheadDistance = getDistanceToWaypoint(position, aheadWaypoint);
+      if (Number.isFinite(aheadDistance) && aheadDistance < currentDistance) {
+        let nextIndex = findNextPositionIndex(aheadIndex, 1);
 
-        if (!isDelayWaypoint(closestWaypoint) && isAtWaypoint(position, closestWaypoint)) {
-          const afterClosest = closestIndex + 1;
-          if (afterClosest < route.length) {
-            nextIndex = findNextPositionIndex(afterClosest, 1);
+        if (!isDelayWaypoint(aheadWaypoint) && isAtWaypoint(position, aheadWaypoint)) {
+          const afterAhead = aheadIndex + 1;
+          if (afterAhead < route.length) {
+            nextIndex = findNextPositionIndex(afterAhead, 1);
           }
         } else {
-          const afterIndex = closestIndex + 1;
+          const afterIndex = aheadIndex + 1;
           if (afterIndex < route.length) {
             const afterWaypoint = route[afterIndex];
             const afterDistance = getDistanceToWaypoint(position, afterWaypoint);
-            if (Number.isFinite(afterDistance) && afterDistance < closestDistance) {
+            if (Number.isFinite(afterDistance) && afterDistance < aheadDistance) {
               nextIndex = findNextPositionIndex(afterIndex, 1);
             }
           }
@@ -5042,23 +5105,23 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
           resetDelayState();
         }
       }
-    } else if (direction < 0 && closestIndex < state.currentIndex) {
-      const closestWaypoint = route[closestIndex];
-      const closestDistance = getDistanceToWaypoint(position, closestWaypoint);
-      if (Number.isFinite(closestDistance) && closestDistance < currentDistance) {
-        let nextIndex = findNextPositionIndex(closestIndex, -1);
+    } else if (direction < 0 && aheadIndex < state.currentIndex) {
+      const aheadWaypoint = route[aheadIndex];
+      const aheadDistance = getDistanceToWaypoint(position, aheadWaypoint);
+      if (Number.isFinite(aheadDistance) && aheadDistance < currentDistance) {
+        let nextIndex = findNextPositionIndex(aheadIndex, -1);
 
-        if (!isDelayWaypoint(closestWaypoint) && isAtWaypoint(position, closestWaypoint)) {
-          const afterClosest = closestIndex - 1;
-          if (afterClosest >= 0) {
-            nextIndex = findNextPositionIndex(afterClosest, -1);
+        if (!isDelayWaypoint(aheadWaypoint) && isAtWaypoint(position, aheadWaypoint)) {
+          const afterAhead = aheadIndex - 1;
+          if (afterAhead >= 0) {
+            nextIndex = findNextPositionIndex(afterAhead, -1);
           }
         } else {
-          const afterIndex = closestIndex - 1;
+          const afterIndex = aheadIndex - 1;
           if (afterIndex >= 0) {
             const afterWaypoint = route[afterIndex];
             const afterDistance = getDistanceToWaypoint(position, afterWaypoint);
-            if (Number.isFinite(afterDistance) && afterDistance < closestDistance) {
+            if (Number.isFinite(afterDistance) && afterDistance < aheadDistance) {
               nextIndex = findNextPositionIndex(afterIndex, -1);
             }
           }
@@ -5077,7 +5140,7 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
         to: state.currentIndex + 1,
         total: route.length,
         direction: state.direction,
-        closestWaypoint: closestIndex + 1,
+        aheadWaypoint: aheadIndex + 1,
         waypoint: getCurrentWaypoint(),
       });
       return true;
@@ -5855,6 +5918,10 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
 
     if (Object.prototype.hasOwnProperty.call(nextConfig, "waypointTolerance")) {
       nextConfig.waypointTolerance = Math.max(0, Math.trunc(Number(nextConfig.waypointTolerance) || 0));
+    }
+
+    if (Object.prototype.hasOwnProperty.call(nextConfig, "waypointLookahead")) {
+      nextConfig.waypointLookahead = Math.max(1, Math.trunc(Number(nextConfig.waypointLookahead) || 12));
     }
 
     Object.assign(config, nextConfig);
