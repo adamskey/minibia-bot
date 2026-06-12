@@ -43,7 +43,7 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
     {
       tickMs: 500,
       repathMs: 1500,
-      waypointTolerance: 0,
+      waypointTolerance: 2,
       pauseUntilClear: true,
       pauseUntilSpawn: false,
       pauseUntilSpawnFloorOffset: 1,
@@ -1172,13 +1172,171 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
     return best;
   }
 
+  function getWaypointTolerance() {
+    const value = Number(config.waypointTolerance);
+    if (!Number.isFinite(value) || value < 0) {
+      return 2;
+    }
+
+    return Math.trunc(value);
+  }
+
+  function findNextPositionIndex(startIndex, direction = 1) {
+    let index = Math.trunc(Number(startIndex) || 0);
+
+    while (index >= 0 && index < route.length) {
+      if (!isDelayWaypoint(route[index])) {
+        return index;
+      }
+      index += direction;
+    }
+
+    return Math.max(0, Math.min(route.length - 1, Math.trunc(Number(startIndex) || 0)));
+  }
+
+  function syncWaypointProgress(position) {
+    if (!position || !route.length) {
+      return false;
+    }
+
+    const previousIndex = state.currentIndex;
+    const direction = state.direction >= 0 ? 1 : -1;
+
+    if (direction > 0) {
+      let index = state.currentIndex;
+      while (index < route.length) {
+        const waypoint = route[index];
+        if (isDelayWaypoint(waypoint) || !isAtWaypoint(position, waypoint)) {
+          break;
+        }
+        index += 1;
+      }
+
+      if (index !== state.currentIndex) {
+        if (index >= route.length) {
+          state.currentIndex = route.length - 1;
+          state.direction = -1;
+        } else {
+          state.currentIndex = index;
+        }
+      }
+    } else {
+      let index = state.currentIndex;
+      while (index >= 0) {
+        const waypoint = route[index];
+        if (isDelayWaypoint(waypoint) || !isAtWaypoint(position, waypoint)) {
+          break;
+        }
+        index -= 1;
+      }
+
+      if (index !== state.currentIndex) {
+        if (index < 0) {
+          state.currentIndex = 0;
+          state.direction = 1;
+        } else {
+          state.currentIndex = index;
+        }
+      }
+    }
+
+    const currentWaypoint = getCurrentWaypoint();
+    const currentDistance = getDistanceToWaypoint(position, currentWaypoint);
+    const closestIndex = findClosestWaypointIndex(position);
+
+    if (!Number.isFinite(currentDistance)) {
+      if (previousIndex !== state.currentIndex) {
+        resetDelayState();
+        bot.log("cave synced waypoint progress", {
+          from: previousIndex + 1,
+          to: state.currentIndex + 1,
+          total: route.length,
+          direction: state.direction,
+          waypoint: getCurrentWaypoint(),
+        });
+        return true;
+      }
+      return false;
+    }
+
+    if (direction > 0 && closestIndex > state.currentIndex) {
+      const closestWaypoint = route[closestIndex];
+      const closestDistance = getDistanceToWaypoint(position, closestWaypoint);
+      if (Number.isFinite(closestDistance) && closestDistance < currentDistance) {
+        let nextIndex = findNextPositionIndex(closestIndex, 1);
+
+        if (!isDelayWaypoint(closestWaypoint) && isAtWaypoint(position, closestWaypoint)) {
+          const afterClosest = closestIndex + 1;
+          if (afterClosest < route.length) {
+            nextIndex = findNextPositionIndex(afterClosest, 1);
+          }
+        } else {
+          const afterIndex = closestIndex + 1;
+          if (afterIndex < route.length) {
+            const afterWaypoint = route[afterIndex];
+            const afterDistance = getDistanceToWaypoint(position, afterWaypoint);
+            if (Number.isFinite(afterDistance) && afterDistance < closestDistance) {
+              nextIndex = findNextPositionIndex(afterIndex, 1);
+            }
+          }
+        }
+
+        if (nextIndex > state.currentIndex) {
+          state.currentIndex = nextIndex;
+          resetDelayState();
+        }
+      }
+    } else if (direction < 0 && closestIndex < state.currentIndex) {
+      const closestWaypoint = route[closestIndex];
+      const closestDistance = getDistanceToWaypoint(position, closestWaypoint);
+      if (Number.isFinite(closestDistance) && closestDistance < currentDistance) {
+        let nextIndex = findNextPositionIndex(closestIndex, -1);
+
+        if (!isDelayWaypoint(closestWaypoint) && isAtWaypoint(position, closestWaypoint)) {
+          const afterClosest = closestIndex - 1;
+          if (afterClosest >= 0) {
+            nextIndex = findNextPositionIndex(afterClosest, -1);
+          }
+        } else {
+          const afterIndex = closestIndex - 1;
+          if (afterIndex >= 0) {
+            const afterWaypoint = route[afterIndex];
+            const afterDistance = getDistanceToWaypoint(position, afterWaypoint);
+            if (Number.isFinite(afterDistance) && afterDistance < closestDistance) {
+              nextIndex = findNextPositionIndex(afterIndex, -1);
+            }
+          }
+        }
+
+        if (nextIndex < state.currentIndex) {
+          state.currentIndex = nextIndex;
+          resetDelayState();
+        }
+      }
+    }
+
+    if (previousIndex !== state.currentIndex) {
+      bot.log("cave synced waypoint progress", {
+        from: previousIndex + 1,
+        to: state.currentIndex + 1,
+        total: route.length,
+        direction: state.direction,
+        closestWaypoint: closestIndex + 1,
+        waypoint: getCurrentWaypoint(),
+      });
+      return true;
+    }
+
+    return false;
+  }
+
   function isAtWaypoint(position, waypoint) {
     const distance = getDistanceToWaypoint(position, waypoint);
     if (!Number.isFinite(distance)) {
       return false;
     }
 
-    return distance <= Math.max(0, Number(config.waypointTolerance) || 0);
+    return distance <= getWaypointTolerance();
   }
 
   function goToWaypoint(waypoint) {
@@ -1650,6 +1808,13 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
         }
       }
 
+      syncWaypointProgress(position);
+      waypoint = getCurrentWaypoint();
+      if (!waypoint) {
+        stop();
+        return;
+      }
+
       if (positionKey && positionKey !== state.lastPositionKey) {
         state.lastPositionKey = positionKey;
         state.lastProgressAt = now;
@@ -1932,6 +2097,10 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
       nextConfig.pauseUntilSpawnFloorOffset = normalizeSpawnFloorOffset(nextConfig.pauseUntilSpawnFloorOffset);
     }
 
+    if (Object.prototype.hasOwnProperty.call(nextConfig, "waypointTolerance")) {
+      nextConfig.waypointTolerance = Math.max(0, Math.trunc(Number(nextConfig.waypointTolerance) || 0));
+    }
+
     Object.assign(config, nextConfig);
     config.tickMs = 500;
     persistConfig();
@@ -1976,6 +2145,7 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
     goToPosition,
     handleFloorChange,
     findClosestWaypointIndex,
+    syncWaypointProgress,
     findRopeSource,
     findShovelSource,
     inspectNearbyTiles: (radius = 1) => {
